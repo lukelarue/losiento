@@ -1,0 +1,542 @@
+# Lo Siento – Project Specification
+
+This document specifies the implementation plan for **Lo Siento**, an online, iframe-embedded adaptation of the board game *Sorry!* using a Python backend and Firestore-based realtime synchronization.
+
+Authoritative game rules are defined in `rules.md` and must remain the single source of truth.
+
+---
+
+## 1. Scope and Goals
+
+- **Goal:** Implement a multiplayer Lo Siento game that:
+  - Runs in an iframe on the main site (similar to Minesweeper).
+  - Uses a **server-authoritative Python backend**.
+  - Uses **Firestore** to broadcast authoritative game state and record moves.
+  - Supports **2–4 players**, any mix of humans and bots (at least 1 human).
+  - Allows players to leave and rejoin mid-game, with bots taking over when humans leave.
+  - Enforces all rules described in `rules.md` and provides adequate tests.
+
+
+---
+
+## 2. High-Level Architecture
+
+- **Frontend**
+  - Static web app served from the `losiento` project (mirroring Minesweeper approach).
+  - Embedded in the main site via `<iframe>`.
+  - Uses Firestore client SDK to subscribe to game/lobby documents.
+  - Uses simple JS/TS state management to:
+    - Display lobby (Host/Join views).
+    - Display joinable games list.
+    - Display in-game board and controls.
+
+- **Backend (Python)**
+  - Server-authoritative rules and state transitions.
+  - Exposes HTTP endpoints (or Cloud Functions) for:
+    - Hosting/joining/starting games.
+    - Leaving and kicking players.
+    - Submitting moves.
+    - Triggering bot moves.
+  - Reads/writes game documents and move documents in Firestore.
+
+- **Firestore**
+  - Stores:
+    - Game documents (lobbies and active games).
+    - Per-game moves history.
+    - Optional per-user mapping to enforce "one active game at a time".
+  - Used as the broadcast channel for current game state.
+
+---
+
+## 3. Firestore Data Model
+
+### 3.1 Collections Overview
+
+- `losiento_games/{gameId}` (main game document)
+- `losiento_games/{gameId}/moves/{moveId}` (subcollection)
+- Optional: `losiento_users/{userId}` to store `activeGameId` for quick lookup.
+
+### 3.2 Game Document Structure (`losiento_games/{gameId}`)
+
+**Core fields**
+
+- `gameId: string` – document ID (random or short code).
+- `hostId: string` – user id of host.
+- `hostName: string` – display name of host.
+- `createdAt: timestamp`.
+- `updatedAt: timestamp`.
+- `phase: "lobby" | "active" | "finished" | "aborted"`.
+- `settings: { ... }`:
+  - `maxSeats: number` – 2–4.
+  - `deckSeed: string` or `number` – optional deterministic seed for deck shuffling.
+
+**Seats / players**
+
+- `seats: Array<Seat>` where each `Seat` is:
+  - `index: number` – 0..3.
+  - `color: string` – e.g. "red", "blue", "yellow", "green".
+  - `isBot: boolean`.
+  - `playerId: string | null` – Firestore auth uid or internal user id.
+  - `displayName: string | null`.
+  - `status: "open" | "joined" | "bot"`.
+
+Constraints:
+
+- Exactly `settings.maxSeats` seats are defined (2–4).
+- At least one seat at any time must have `isBot == false` and `playerId != null` (for at least 1 human) when starting.
+
+**Authoritative game state** (only used during `phase == "active"` or beyond):
+
+- `state: { ... }`:
+  - `turnNumber: number` – increments each completed turn.
+  - `currentSeatIndex: number` – whose turn it is.
+  - `deck: string[]` – remaining cards (e.g. ["1", "2", "4", ...]).
+  - `discardPile: string[]` – cards already used.
+  - `board: BoardState` – all pawn positions.
+  - `lastMove: { ... } | null` – summary for UI (e.g. which pawn moved from A to B, card, bumps, slides).
+  - `winnerSeatIndex: number | null`.
+  - `result: "active" | "win" | "aborted"`.
+
+**BoardState suggestion**
+
+- `board: { pawns: Pawn[] }` where each `Pawn`:
+  - `pawnId: string` – unique id per pawn.
+  - `seatIndex: number` – owner seat.
+  - `position: { type: "start" | "track" | "safety" | "home"; index?: number }`:
+    - `type == "start"` – pawn still in Start.
+    - `type == "track"` – `index` is board track index.
+    - `type == "safety"` – `index` is offset into that seat's Safety Zone.
+    - `type == "home"` – pawn is in Home.
+
+**Game completion**
+
+- `endedAt: timestamp | null`.
+- `abortedReason: string | null` – e.g. "host_left".
+
+### 3.3 Moves Subcollection (`losiento_games/{gameId}/moves/{moveId}`)
+
+Each move doc is **append-only** and reflects a validated server-side move.
+
+Fields:
+
+- `index: number` – 0, 1, 2, ... (turn index to preserve order).
+- `seatIndex: number` – whose turn it was.
+- `playerId: string | null` – human id if applicable; null if bot.
+- `card: string` – e.g. "1", "2", "7", "Sorry!".
+- `moveData: { ... }` – details sufficient to reconstruct:
+  - `pawnId` / `pawnIds` used.
+  - `fromPosition(s)`.
+  - `toPosition(s)`.
+  - Any split for a 7.
+  - Whether a bump occurred and which pawn was bumped.
+  - Whether any slide(s) occurred.
+- `resultingStateHash: string` – hash of resulting `state` (for debugging/verification).
+- `createdAt: timestamp`.
+
+### 3.4 Users Collection (Optional Convenience)
+
+`losiento_users/{userId}`:
+
+- `activeGameId: string | null` – the game a user is currently in.
+- Possibly `displayName` and other metadata reused in seats.
+
+This simplifies enforcing "one active game at a time".
+
+---
+
+## 4. Backend (Python) Design
+
+### 4.1 Rules Engine
+
+Implement a pure, deterministic rules engine module, e.g. `engine.py`:
+
+- Core types:
+  - `GameState`, `BoardState`, `Pawn`, `Card`, `Seat`, etc.
+- Pure functions:
+  - `initialize_game(settings, seats, deckSeed) -> GameState`.
+  - `draw_card(state) -> (stateWithCard, card)`.
+  - `get_legal_moves(state, seatIndex, card) -> List<Move>`.
+  - `apply_move(state, move) -> GameState`.
+  - `check_winner(state) -> Optional[seatIndex]`.
+
+Requirements:
+
+- Implement all rules from `rules.md`:
+  - 4 pawns per player.
+  - 1/2/Sorry! to leave Start.
+  - Exact count required to enter Home.
+  - Slides allowed on any color.
+  - Special "slide into Safety Zone" rule when landing on slide start before Safety Zone.
+  - Safety Zones rules.
+  - All card-specific behaviors (2 extra draw, 7 split, 10 forward/back, 11 switch, Sorry! limitations, etc.).
+- Return full before/after positions needed for move logging and UI.
+
+### 4.2 HTTP / RPC Endpoints
+
+Assuming a Cloud Run-style service with JSON endpoints (names illustrative):
+
+- `POST /host_game`
+  - Body: `{ maxSeats, userId, displayName }`.
+  - Behavior:
+    - Ensure user has no active game.
+    - Create `losiento_games/{gameId}` in `lobby` phase with seats configured.
+    - Set `activeGameId` for user.
+
+- `POST /join_game`
+  - Body: `{ gameId, userId, displayName }`.
+  - Behavior:
+    - Ensure game is in `lobby` and has an open human seat.
+    - Ensure user has no active game.
+    - Claim a seat, update `seats` and `updatedAt`.
+    - Set `activeGameId` for user.
+
+- `POST /leave_game`
+  - Body: `{ gameId, userId }`.
+  - Behavior:
+    - If user is host and game is `active`, mark game as `aborted`, set `result = "aborted"`, `abortedReason = "host_left"`, clear `activeGameId` for all players.
+    - If user is host and game is `lobby`, delete or mark game as `aborted`, clear `activeGameId` for all players.
+    - If user is non-host:
+      - Convert their seat to `isBot = true`, `playerId = null`, `status = "bot"`.
+      - Clear their `activeGameId`.
+
+- `POST /kick_player`
+  - Body: `{ gameId, hostId, seatIndex }`.
+  - Behavior:
+    - Verify caller is host.
+    - For lobby or active game:
+      - Convert target seat to `isBot = true`, `playerId = null`, `status = "bot"`.
+      - Clear kicked user’s `activeGameId`.
+
+- `POST /configure_seat`
+  - Body: `{ gameId, hostId, seatIndex, isBot }` (allowed only in `lobby`).
+  - Behavior:
+    - Host toggles seat between bot/human (respecting at least 1 human total and 2+ total players before start).
+
+- `POST /start_game`
+  - Body: `{ gameId, hostId }`.
+  - Behavior:
+    - Validate `phase == "lobby"` and there are at least 2 total seats occupied (human or bot) and at least 1 human.
+    - Initialize `state` using rules engine and shuffled deck.
+    - Set `phase = "active"`.
+
+- `POST /play_move`
+  - Body: `{ gameId, userId, clientMovePayload }`.
+  - Behavior:
+    - Load game doc.
+    - Verify `phase == "active"`, `userId` matches the player for `state.currentSeatIndex`, and seat is not bot.
+    - Derive card + legal moves using rules engine.
+    - Validate `clientMovePayload` matches one of the legal moves.
+    - Apply move using rules engine.
+    - Append move doc to `moves` subcollection.
+    - Update `state`, including `turnNumber`, `currentSeatIndex`, `deck`, `discardPile`, `board`, `lastMove`, `winnerSeatIndex`, `result`.
+
+- `POST /bot_step`
+  - Body: `{ gameId }` (can be invoked by scheduled pings from clients or a backend loop).
+  - Behavior:
+    - If `phase != "active"`, return.
+    - If `currentSeatIndex` is a bot seat and at least ~1 second has elapsed since last state update:
+      - Use rules engine to compute legal moves.
+      - Randomly select a move.
+      - Apply as in `play_move` with `playerId = null`.
+
+### 4.3 Concurrency and Transactions
+
+- Use Firestore transactions or retries to handle concurrent writes:
+  - When applying moves, always re-read latest game doc, verify `phase` and `currentSeatIndex`, then update.
+  - Reject stale or double-submitted moves.
+
+---
+
+## 5. Frontend / UX Flows
+
+### 5.1 Entry Point
+
+- When user navigates to the Lo Siento iframe:
+  - Call backend/Firestore to determine if user has `activeGameId`.
+  - If yes, **auto-join** that game and show in-game UI.
+  - If no, show **Lobby screen**:
+    - Buttons: **Host a Game**, **Join a Game**.
+
+### 5.2 Host a Game Screen
+
+- Form:
+  - `Number of players (seats)` – 2–4.
+  - For each seat: toggle between **Human** and **Bot** (must keep at least 1 human overall).
+- After creation:
+  - Show lobby view for that game:
+    - Host name.
+    - List of seats with status (open/joined/bot).
+    - For each human seat: show player name or "Waiting for player".
+    - Host controls:
+      - Add/remove bots (only in lobby).
+      - Kick players.
+      - Start game button (enabled when >=2 total players and at least 1 human).
+
+### 5.3 Join Game Screen
+
+- Shows scrollable list of joinable games (`phase == "lobby"`):
+  - For each game:
+    - Host name or game label.
+    - `currentPlayers / maxSeats` (humans + bots).
+    - Simple status indicator.
+  - "Join" button for games with at least one open human seat.
+- On join success:
+  - User moves to that game's lobby view.
+
+### 5.4 In-Game Screen
+
+- Show:
+  - Board with pawns for all seats.
+  - Indicator of current player turn and drawn card.
+  - Simple move UI:
+    - Highlight selected pawn and possible destinations.
+    - For complex cards (7 split, 11 switch, Sorry!), display simple choices.
+- Controls:
+  - **Leave game** button for non-hosts (triggers `leave_game`).
+  - **Kick player** and basic seat info for host.
+- When host leaves:
+  - Game immediately transitions to `aborted` and frontend sends players back to lobby entry screen.
+
+---
+
+## 6. Bot Behavior
+
+- Bots are represented as seats with `isBot = true` and `playerId = null`.
+- When a human leaves or is kicked:
+  - Backend converts their seat to bot and the game continues.
+- Rejoining behavior:
+  - When a user with `activeGameId` opens Lo Siento:
+    - If their previous seat was turned into a bot in that game and game is still `active`, backend should:
+      - Re-associate that seat with the returning user (clear `isBot`, set `playerId`, `displayName`).
+- Turn handling:
+  - When `currentSeatIndex` is bot:
+    - After ~1 second (enforced on backend via timestamp comparison), backend picks a random legal move and applies it.
+
+---
+
+## 7. Security and Invariants
+
+- **Single active game per user**
+  - Maintain `activeGameId` in `losiento_users/{userId}`.
+  - Backend must ensure:
+    - A user cannot host or join if `activeGameId` is non-null.
+
+- **Move authorization**
+  - Firestore security rules and backend checks must ensure:
+    - Only backend functions modify `state` and `moves` (clients never write `state` directly).
+    - Only the current seat's player can submit a move for that seat.
+
+- **Game invariants**
+  - `state.board` and `state.deck` must always reflect a legal position according to rules engine.
+  - When `result != "active"`, no further moves are accepted.
+
+---
+
+## 8. Testing Plan
+
+All rules in `rules.md` must be covered by automated tests.
+
+### 8.1 Rules Engine Unit Tests
+
+- **Deck & drawing**
+  - Deck has 45 cards with correct counts.
+  - Drawing through entire deck works; 2 grants extra draw.
+
+- **Movement basics**
+  - 1/2/Sorry! leave Start behavior.
+  - Standard forward/back moves for 3,4,5,8,10,11,12.
+  - 10 backward when 10-forward is impossible.
+
+- **7 card**
+  - Single-pawn 7 forward.
+  - Split 7 across two pawns.
+  - Enforcing full use of 7 spaces.
+  - 7 cannot leave Start and cannot move backwards.
+
+- **11 card**
+  - Forward 11.
+  - Switch with opponent pawn.
+  - Cannot switch with pawns in Safety Zone.
+  - Cannot leave Start.
+
+- **Sorry! card**
+  - From Start to opponent pawn, bumping correctly.
+  - Cannot target Safety Zone or Home pawns.
+  - No pawns in Start or no legal targets → no move.
+
+- **Bumping & self-bump prohibition**
+  - Landing on opponent bumps them to Start.
+  - Moves that would land on own pawn are rejected if no alternative move exists.
+
+- **Slides**
+  - Sliding when landing on slide start.
+  - House rule: sliding on own color works.
+  - All pawns on slide path are sent to their Start, including sliding player.
+  - Special slide-into-Safety-Zone rule.
+
+- **Safety Zones and Home**
+  - Only own pawns can enter Safety Zone.
+  - Pawns in Safety Zones cannot be bumped, switched, or targeted by Sorry!.
+  - Forced backward out of Safety Zone makes pawn vulnerable again.
+  - Exact-count Home entry; overshoot is illegal.
+
+- **Win condition**
+  - Game ends when a player’s 4th pawn reaches Home.
+  - No ties (ensure simultaneous win is impossible in state transitions).
+
+### 8.2 Backend Integration Tests
+
+- Host/join/start flows:
+  - Host creates game, players join, host starts game.
+  - Enforce 2–4 seats and at least 1 human.
+
+- Single active game invariant:
+  - Attempting to host/join while already in a game fails.
+  - Leaving clears `activeGameId`.
+
+- Leaving, kicking, and host abort:
+  - Non-host leave → seat becomes bot, game continues.
+  - Host leave → game is aborted, players return to lobby state.
+  - Kicking player → seat becomes bot and kicked user’s `activeGameId` cleared.
+
+- Rejoin behavior:
+  - Player leaves, bot takes over seat.
+  - Player revisits Lo Siento while game still active → seat re-bound to player, bot disabled.
+
+- Bot moves:
+  - When `currentSeatIndex` is bot, backend picks random legal move and applies after approximate delay.
+
+- Firestore updates:
+  - Each accepted move appends a move doc and updates `state` atomically.
+
+---
+
+## 9. Implementation Tasks Checklist
+
+1. **Project setup**
+   - Mirror Minesweeper’s folder and deployment structure under `losiento`.
+   - Add Python backend skeleton with dependencies (Firestore client, web framework, etc.).
+   - Configure static frontend hosting for Lo Siento iframe.
+
+2. **Firestore schema and rules**
+   - Create `losiento_games` and `losiento_users` collections.
+   - Implement security rules to restrict who can read/write what.
+
+3. **Rules engine (Python)**
+   - Implement data structures and pure functions in `engine.py`.
+   - Add unit tests covering all rules in `rules.md`.
+
+4. **Backend endpoints**
+   - Implement `host_game`, `join_game`, `leave_game`, `kick_player`, `configure_seat`, `start_game`, `play_move`, `bot_step`.
+   - Add integration tests for core flows.
+
+5. **Frontend lobby UI**
+   - Implement entry screen (Host/Join).
+   - Implement Host Game screen with seat configuration.
+   - Implement Join Game list and join flow.
+
+6. **Frontend in-game UI**
+   - Implement minimal board visualization and pawn rendering.
+   - Implement move selection UX including complex cards.
+   - Wire Firestore listeners to re-render based on `losiento_games/{gameId}`.
+
+7. **Bot integration**
+   - Implement backend-side bot move selection using rules engine.
+   - Implement 1s delay and ensure bots trigger when needed.
+
+8. **Polish and validation**
+   - Ensure rejoin flows work correctly for humans.
+   - Validate that all rule/invariant tests pass.
+   - Verify iframe embedding behavior and navigation back to lobby.
+
+---
+
+## 10. Deployment (Terraform + Cloud Run)
+
+Lo Siento should follow the same general deployment approach as Minesweeper: a Python backend running on **Cloud Run**, provisioned/configured via **Terraform**, and reachable from the main site.
+
+### 10.1 Cloud Run Service
+
+- Create a dedicated Cloud Run service, e.g. `losiento-api`.
+- Image built from the `losiento` backend Dockerfile.
+- Key configuration (mirroring Minesweeper where reasonable):
+  - Region and project set via standard Terraform variables.
+  - Appropriate concurrency and CPU/memory settings.
+  - Environment variables:
+    - `GOOGLE_CLOUD_PROJECT`
+    - Firestore/credentials-related envs used by the Python client.
+    - Any feature flags needed for Lo Siento (e.g. `ALLOW_ANON`, `DEFAULT_USER_ID` if you mirror local/demo behavior).
+  - Ingress and authentication handled consistently with Minesweeper (e.g. internal behind a gateway or public with auth in the platform layer).
+
+### 10.2 Terraform Modules and State
+
+- Add a Terraform module or resource set for Lo Siento alongside Minesweeper:
+  - `google_cloud_run_service.losiento_api` for the service.
+  - IAM bindings (service account invoker roles, etc.).
+- Reuse the existing pattern where **Terraform ignores the container image digest** so CI can deploy new revisions (same approach as Minesweeper’s Cloud Run deployment):
+  - Use `lifecycle { ignore_changes = [template[0].spec[0].containers[0].image] }` or the equivalent pattern already used for Minesweeper.
+- Optionally share service accounts, logging/monitoring configuration, and Firestore project setup with Minesweeper, assuming same GCP project.
+
+### 10.3 CI/CD
+
+- Extend the existing CI/CD pipeline that builds and deploys Minesweeper to also:
+  - Build the `losiento` backend image.
+  - Push to the container registry (Artifact Registry or GCR).
+  - Update the Cloud Run service (using pinned image digests if that’s your existing pattern).
+- Ensure Terraform plans remain clean regarding image digests (only infrastructure drift, not image updates).
+
+### 10.4 Frontend Hosting
+
+- Serve the Lo Siento frontend using the same mechanism as Minesweeper:
+  - Either static hosting (e.g. under an existing web app) or via the main React app’s routes.
+  - The `losiento` iframe in the main site points at the frontend URL, which in turn calls the Lo Siento backend (Cloud Run) via the platform’s APIs.
+
+---
+
+## 11. Local Development and NPM Integration
+
+Lo Siento should be runnable locally alongside the existing stack (`lukelaruecom` repo) so that `npm run dev:stack:all:win` can bring up:
+
+- Firestore emulator
+- Login API
+- Chat API
+- Minesweeper backend
+- Lo Siento backend
+- Frontend
+
+### 11.1 Local Backend Command (Windows)
+
+Plan to add a new NPM script in `lukelaruecom/package.json` for running the Lo Siento backend in development, conceptually similar to `dev:minesweeper:win`. For example:
+
+- `dev:losiento:win`
+  - Powershell command that:
+    - `Set-Location` into the `losiento` project directory.
+    - Ensures a local virtualenv exists (e.g. `.venv`), installs backend requirements from `requirements.txt` if needed.
+    - Exports environment variables pointing at the Firestore emulator and GCP project id used for local dev (e.g. `FIRESTORE_EMULATOR_HOST='127.0.0.1:8080'`, `GOOGLE_CLOUD_PROJECT='demo-firestore'`).
+    - Starts the Python server via `uvicorn` (e.g. `app.main:app`) on a dedicated port (for example `8001`), leaving Minesweeper on `8000`.
+
+Implementation details will mirror the existing `dev:minesweeper:win` script structure to keep local setup consistent.
+
+### 11.2 Integrating with `dev:stack:all:win`
+
+In `lukelaruecom/package.json` there is currently a `dev:stack:all:win` script that starts:
+
+- Firestore emulator
+- Login API
+- Chat API
+- Minesweeper backend (`dev:minesweeper:win`)
+- Frontend (via `dev:stack:all:win:web`)
+
+Plan to:
+
+1. Add `dev:losiento:win` as described above.
+2. Update `dev:stack:all:win` to run `dev:losiento:win` in parallel with the existing commands (using the same `npm-run-all` pattern).
+3. Ensure any `wait-on` dependencies (ports) are updated if needed so the frontend can safely assume Lo Siento’s backend is available.
+
+### 11.3 Local Frontend Behavior
+
+- When running the full stack locally:
+  - The main site (apps/web) should expose a Lo Siento page that embeds the Lo Siento iframe or otherwise routes to the Lo Siento frontend.
+  - The Lo Siento frontend should be configured (e.g. via environment variables or config file) to call the Lo Siento backend on its local dev port.
+- Ensure the Firestore emulator configuration for Lo Siento matches the rest of the stack (same project id, emulator host, etc.).
+
