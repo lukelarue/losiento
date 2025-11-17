@@ -1,0 +1,56 @@
+losiento_game/__pycache__/__init__.cpython-313.pyc
+losiento_game/__pycache__/engine.cpython-313.pyc
+losiento_game/__pycache__/models.cpython-313.pyc
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build / distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# IDE / editor
+.idea/
+.vscode/
+
+# OS cruft
+Thumbs.db
+*.DS_Store
+
+# Python tooling caches
+.mypy_cache/
+.tox/
+.nox/
+.hypothesis/
+.python-version
+
+# JavaScript / TypeScript
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.tsbuildinfo
+.eslintcache
+
+# Editor swap/backup files
+*~
+*.swp
+*.swo
+*.orig

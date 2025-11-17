@@ -540,3 +540,120 @@ Plan to:
   - The Lo Siento frontend should be configured (e.g. via environment variables or config file) to call the Lo Siento backend on its local dev port.
 - Ensure the Firestore emulator configuration for Lo Siento matches the rest of the stack (same project id, emulator host, etc.).
 
+---
+
+## 12. Implementation Status (WIP)
+
+This section tracks the current implementation status against the spec.
+
+- **Backend skeleton (Python FastAPI service)**
+  - **Status:** Completed (initial)
+  - Notes:
+    - `app/main.py` created with FastAPI app, CORS, user-id extraction, and endpoints for host/join/leave/kick/configure-seat/start/state/play_move/bot_step.
+    - Static frontend mount is wired to `losiento/frontend` if present.
+
+- **Game models & deck**
+  - **Status:** Completed (initial)
+  - Notes:
+    - `losiento_game/models.py` defines `Card`, `PawnPosition`, `Pawn`, `Seat`, `GameSettings`, `GameState`, and `game_state_to_dict` consistent with the spec.
+    - `losiento_game/engine.py` implements deck construction and shuffling with the correct 45-card composition.
+
+- **Board geometry (outer track, slides, Safety Zones)**
+  - **Status:** Completed (geometry wired into code)
+  - Notes:
+    - `rules.md` documents the per-color track segment pattern and safe-zone entry (section 5.7).
+    - `losiento_game/engine.py` defines constants for track length, segment layout, slide positions, and safe-zone entry indices derived from those rules.
+
+- **Rules engine: movement & cards**
+  - **Status:** Partially implemented (advanced behaviors & selection pending)
+  - Notes:
+    - Core movement, bumping, slides, Safety Zones, Home entry, and basic card behavior are implemented in pure engine functions `get_legal_moves` and `apply_move` in `losiento_game/engine.py`.
+    - `InMemoryPersistence.play_move(...)` and `bot_step(...)` now use this engine API: draw a card, enumerate legal moves, and apply the first legal move (matching the previous heuristic).
+    - Advanced card behaviors are partially implemented:
+      - Card `7` now supports both a single 7-step forward move and splitting the 7 spaces across **two pawns**, enforcing that all 7 spaces are used in total and that both portions move **forward only**. The rules engine encodes split moves explicitly in the `Move` structure so they can be surfaced to clients.
+      - Card `11` supports both the "move 11 spaces forward" behavior **and** a basic "switch with an opponent pawn" behavior when both pawns are on the track; some nuances such as slide interactions after a switch remain simplified.
+      - `Sorry!` moves from Start to opponent pawns on the track and bumps them; some edge cases (e.g., full validation of all legal targets and move choice) are simplified.
+    - **Completed work – pure rules engine API (ls-10):**
+      - Movement and card-resolution logic has been extracted into pure helpers and `get_legal_moves` / `apply_move` in `losiento_game/engine.py`.
+      - `get_legal_moves(state, seat_index, card)` enumerates legal moves without mutating state.
+      - `apply_move(state, move)` applies a chosen move and returns a new `GameState`.
+      - `InMemoryPersistence.play_move` / `bot_step` are wired to call this engine API instead of their own movement logic.
+    - **Upcoming work – advanced card behaviors & selection (ls-11):**
+      - Refine 11-switch behavior to fully match the spec (e.g., handling slide interactions when the switching pawn lands on a slide start and auditing remaining edge cases).
+      - Expand `Sorry!` targeting to consider all legal target pawns and encode those options as legal moves.
+      - Define a richer `clientMovePayload` format (beyond the current optional 0-based `moveIndex`) and validate that the payload corresponds to one of the legal moves provided by `get_legal_moves`.
+      - Change `play_move` to **require** a valid `clientMovePayload` for human players (except trivial single-move cases) instead of defaulting to the first legal move.
+      - Bots already choose a random legal move from `get_legal_moves`; remaining selection work is focused on human move specification and advanced card behaviors.
+
+- **In-memory persistence & gameplay**
+  - **Status:** Implemented (initial gameplay)
+  - Notes:
+    - `InMemoryPersistence` in `losiento_game/persistence.py` supports:
+      - Hosting games, listing joinable games, joining, leaving, kicking, configuring seats, and starting games.
+      - Enforces one active game per user and the lobby constraints (2–4 seats, at least 1 human to start).
+      - Stores a `GameState` object for active games.
+    - `play_move(...)`:
+      - Draws from an authoritative deck, uses the rules engine (`get_legal_moves` / `apply_move`) to apply card behavior, and advances the turn.
+      - Enforces basic turn ownership (`not_your_turn`, `not_in_game`) and game lifecycle (`game_not_started`, `game_over`).
+      - Implements card `2` extra-draw behavior.
+      - Supports an optional `payload.moveIndex` (0-based) allowing the client to select among legal moves for the drawn card; when `moveIndex` is missing or invalid, the first legal move is used.
+    - `bot_step(...)`:
+      - Verifies it is a bot’s turn and then draws and applies a card for that bot via the same rules engine API.
+      - Implements card `2` extra-draw behavior for bots as well.
+      - Bots choose a random legal move from those returned by `get_legal_moves` (for the main card and for the extra draw on a 2).
+
+ - **Firestore-backed persistence**
+  - **Status:** Implemented (lobby + start + seat management + per-turn gameplay + moves logging + concurrency)
+  - Notes:
+    - `FirestorePersistence` in `losiento_game/persistence.py` now implements lobby, game-start, seat/player management, and per-turn gameplay operations against `losiento_games` / `losiento_users`:
+      - `host_game` – creates a lobby game document with configured seats, sets `activeGameId` for the host.
+      - `list_joinable_games` – lists lobby games with at least one open human seat.
+      - `join_game` – joins a lobby game, claims an open human seat, and sets `activeGameId` for the user.
+      - `get_active_game_for_user` – reads `activeGameId` from `losiento_users/{userId}` and returns the corresponding game document.
+      - `start_game` – validates host and player counts, initializes a `GameState` via the rules engine, and persists its serialized `state` payload into the Firestore game document while transitioning `phase` to `"active"`.
+      - `leave_game` – handles host and non-host leave according to the spec (host aborts the game and clears all `activeGameId`s; non-host converts their seat to a bot and clears their own `activeGameId`).
+      - `kick_player` – host-only, converts the target seat to a bot and clears the kicked user’s `activeGameId`.
+      - `configure_seat` – host-only in lobby, toggles seats between bot and human, clearing `activeGameId` when converting a human seat to a bot.
+      - `play_move` – applies human moves using the rules engine and serialized `GameState` stored in the Firestore document, including card draws (with card `2` extra-draw) and optional `moveIndex` selection mirroring the in-memory implementation.
+      - `bot_step` – applies bot turns using the rules engine with random legal move selection and card `2` extra-draw semantics, mirroring the in-memory implementation.
+      - `to_client` – shapes a Firestore game document into the client-facing JSON payload.
+    - Firestore-backed **concurrency** is implemented:
+      - `FirestorePersistence.play_move` and `bot_step` run inside Firestore transactions so that state updates and move logging are applied atomically and stale or concurrent updates are rejected.
+
+- **Frontend & iframe integration**
+  - **Status:** Not started
+  - Notes:
+    - No Lo Siento-specific frontend yet; backend is ready to serve static files from `losiento/frontend` when created.
+    - apps/web has not yet been updated to expose a Lo Siento route/page or iframe.
+
+- **Terraform / Cloud Run deployment**
+  - **Status:** Not started
+  - Notes:
+    - No `google_cloud_run_service` for Lo Siento has been added to `lukelaruecom/infra/cloud_run.tf` yet.
+    - Dockerfile for Lo Siento exists and is suitable for building a Cloud Run image.
+
+- **Local dev / npm integration**
+  - **Status:** Completed (initial wiring)
+  - Notes:
+    - `lukelaruecom/package.json` now includes:
+      - `dev:losiento:win` script to run the Lo Siento backend (port 8001) using a local virtualenv and Firestore emulator.
+      - `dev:stack:all:win:web` updated to wait on the Lo Siento backend port.
+      - `dev:stack:all:win` updated to run `dev:losiento:win` alongside the rest of the stack.
+
+### 12.1 Near-term next steps (backend rules – Option A)
+
+1. **Extract pure rules engine API (COMPLETED – ls-10)**
+   - `get_legal_moves` and `apply_move` are implemented in `losiento_game/engine.py` and `InMemoryPersistence.play_move` / `bot_step` are wired to use them.
+   - Initial unit tests for basic behavior have been added under `losiento/tests/test_engine_basic.py`; more coverage is needed for slides, Safety Zones, Home entry, and all card types (ls-12).
+
+2. **Implement advanced card behaviors & selection (ls-11 – in progress)**
+   - Refine the rules engine’s advanced behaviors:
+     - Audit and refine 11-switch and its interaction with slides and Safety Zones.
+     - Expand Sorry! targeting to consider all legal target pawns and encode those options as legal moves.
+   - Define and document the `clientMovePayload` schema (generalizing the current optional `moveIndex`) and update `play_move` to validate it against `get_legal_moves`.
+   - Selection for bots is already random among legal moves; focus remaining selection work on human move choice and complex card semantics.
+
+3. **Refine Integration Status**
+   - Once the advanced behaviors and selection logic are in place, update this section to mark the rules engine as **Implemented (initial)** and adjust notes to describe any remaining edge cases or future enhancements.
+
+
