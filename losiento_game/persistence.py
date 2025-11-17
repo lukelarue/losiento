@@ -21,6 +21,7 @@ from .engine import (
     build_deck,
     get_legal_moves,
     apply_move,
+    Move,
 )
 
 
@@ -30,6 +31,46 @@ def _now() -> datetime:
 
 def _new_game_id() -> str:
     return uuid.uuid4().hex[:8]
+
+
+def _select_move(moves: List[Move], payload: Dict[str, Any]) -> Move:
+    if not moves:
+        raise ValueError("no_legal_moves")
+    if not isinstance(payload, dict) or not payload:
+        if len(moves) == 1:
+            return moves[0]
+        raise ValueError("move_selection_required")
+
+    idx = payload.get("moveIndex")
+    if isinstance(idx, int) and 0 <= idx < len(moves):
+        return moves[idx]
+
+    move_desc = payload.get("move")
+    if isinstance(move_desc, dict):
+        candidates = moves
+        field_map = {
+            "pawnId": "pawn_id",
+            "targetPawnId": "target_pawn_id",
+            "secondaryPawnId": "secondary_pawn_id",
+            "direction": "direction",
+            "steps": "steps",
+            "secondaryDirection": "secondary_direction",
+            "secondarySteps": "secondary_steps",
+        }
+        for key, attr in field_map.items():
+            if key in move_desc:
+                val = move_desc[key]
+                candidates = [m for m in candidates if getattr(m, attr) == val]
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            raise ValueError("invalid_move_selection_no_match")
+        raise ValueError("invalid_move_selection_ambiguous")
+
+    if len(moves) == 1:
+        return moves[0]
+
+    raise ValueError("invalid_move_selection")
 
 
 class InMemoryPersistence:
@@ -510,15 +551,8 @@ class InMemoryPersistence:
         # Use the pure rules engine to compute and apply a move.
         moves = get_legal_moves(state, seat_index, card)
         if moves:
-            # Optional client-directed selection: payload may specify a
-            # 0-based move index. If absent or invalid, fall back to the
-            # first legal move (legacy behaviour).
-            selected_index: int = 0
-            if isinstance(payload, dict):
-                idx = payload.get("moveIndex")
-                if isinstance(idx, int) and 0 <= idx < len(moves):
-                    selected_index = idx
-            state = apply_move(state, moves[selected_index])
+            selected_move = _select_move(moves, payload)
+            state = apply_move(state, selected_move)
             game["state"] = state
 
         self._check_winner(game, state)
@@ -1246,12 +1280,8 @@ class FirestorePersistence:
                 # we can log a move document.
                 before_state_for_logging = game_state_to_dict(state)["state"]
 
-                selected_index: int = 0
-                if isinstance(payload, dict):
-                    idx = payload.get("moveIndex")
-                    if isinstance(idx, int) and 0 <= idx < len(moves):
-                        selected_index = idx
-                state = apply_move(state, moves[selected_index])
+                selected_move = _select_move(moves, payload)
+                state = apply_move(state, selected_move)
 
                 after_state_for_logging = game_state_to_dict(state)["state"]
                 self._log_move_doc(

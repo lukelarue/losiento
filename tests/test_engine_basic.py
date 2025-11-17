@@ -7,8 +7,10 @@ from losiento_game.engine import (
     apply_move,
     first_slide_indices,
     TRACK_LEN,
+    Move,
 )
 from losiento_game.models import GameSettings, Seat, PawnPosition
+from losiento_game.persistence import _select_move
 
 
 class EngineBasicTests(unittest.TestCase):
@@ -201,6 +203,128 @@ class EngineBasicTests(unittest.TestCase):
             (pawn_b_new.position.kind, pawn_b_new.position.index),
             (pawn_b.position.kind, pawn_b.position.index),
         )
+
+    def test_card11_cannot_leave_start(self) -> None:
+        state, _, _ = self._make_basic_state()
+
+        moves = get_legal_moves(state, seat_index=0, card="11")
+        self.assertFalse(moves, "card 11 should not provide moves when all pawns are in start")
+
+    def test_card11_cannot_switch_with_safety_or_home(self) -> None:
+        state, _, _ = self._make_basic_state()
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawns1 = [p for p in state.pawns if p.seat_index == 1]
+
+        mover = pawns0[0]
+        mover.position = PawnPosition(kind="track", index=0)
+
+        track_pawn = pawns1[0]
+        safety_pawn = pawns1[1]
+        home_pawn = pawns1[2]
+
+        track_pawn.position = PawnPosition(kind="track", index=5)
+        safety_pawn.position = PawnPosition(kind="safety", index=0)
+        home_pawn.position = PawnPosition(kind="home", index=None)
+
+        moves = get_legal_moves(state, seat_index=0, card="11")
+        targets = {m.target_pawn_id for m in moves if m.target_pawn_id is not None}
+
+        self.assertIn(track_pawn.pawn_id, targets)
+        self.assertNotIn(safety_pawn.pawn_id, targets)
+        self.assertNotIn(home_pawn.pawn_id, targets)
+
+    def test_sorry_basic_bump_from_start(self) -> None:
+        state, _, _ = self._make_basic_state()
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawns1 = [p for p in state.pawns if p.seat_index == 1]
+
+        start_pawn = pawns0[0]
+        target = pawns1[0]
+        target.position = PawnPosition(kind="track", index=5)
+
+        moves = get_legal_moves(state, seat_index=0, card="Sorry!")
+        sorry_moves = [m for m in moves if m.target_pawn_id == target.pawn_id]
+        self.assertTrue(sorry_moves, "expected at least one Sorry! move targeting the opponent pawn")
+
+        new_state = apply_move(state, sorry_moves[0])
+        start_new = next(p for p in new_state.pawns if p.pawn_id == start_pawn.pawn_id)
+        target_new = next(p for p in new_state.pawns if p.pawn_id == target.pawn_id)
+
+        self.assertEqual(start_new.position.kind, "track")
+        self.assertEqual(start_new.position.index, 5)
+        self.assertEqual(target_new.position.kind, "start")
+
+    def test_sorry_requires_pawn_in_start(self) -> None:
+        state, _, _ = self._make_basic_state()
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawns1 = [p for p in state.pawns if p.seat_index == 1]
+
+        for i, pawn in enumerate(pawns0):
+            pawn.position = PawnPosition(kind="track", index=i)
+
+        opp = pawns1[0]
+        opp.position = PawnPosition(kind="track", index=10)
+
+        moves = get_legal_moves(state, seat_index=0, card="Sorry!")
+        self.assertFalse(moves, "expected no Sorry! move when no pawn is in start")
+
+    def test_sorry_cannot_target_safety_or_home(self) -> None:
+        state, _, _ = self._make_basic_state()
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawns1 = [p for p in state.pawns if p.seat_index == 1]
+
+        track_pawn = pawns1[0]
+        safety_pawn = pawns1[1]
+        home_pawn = pawns1[2]
+
+        track_pawn.position = PawnPosition(kind="track", index=5)
+        safety_pawn.position = PawnPosition(kind="safety", index=0)
+        home_pawn.position = PawnPosition(kind="home", index=None)
+
+        moves = get_legal_moves(state, seat_index=0, card="Sorry!")
+        targets = {m.target_pawn_id for m in moves if m.target_pawn_id is not None}
+
+        self.assertIn(track_pawn.pawn_id, targets)
+        self.assertNotIn(safety_pawn.pawn_id, targets)
+        self.assertNotIn(home_pawn.pawn_id, targets)
+
+
+class MoveSelectionTests(unittest.TestCase):
+    def _make_moves(self) -> list[Move]:
+        return [
+            Move(card="1", seat_index=0, pawn_id="p1", direction="forward", steps=1),
+            Move(card="1", seat_index=0, pawn_id="p2", direction="forward", steps=1),
+        ]
+
+    def test_select_move_single_without_payload(self) -> None:
+        moves = [Move(card="1", seat_index=0, pawn_id="p1", direction="forward", steps=1)]
+        selected = _select_move(moves, {})
+        self.assertIs(selected, moves[0])
+
+    def test_select_move_requires_payload_for_multiple(self) -> None:
+        moves = self._make_moves()
+        with self.assertRaises(ValueError):
+            _ = _select_move(moves, {})
+
+    def test_select_move_by_index(self) -> None:
+        moves = self._make_moves()
+        selected = _select_move(moves, {"moveIndex": 1})
+        self.assertIs(selected, moves[1])
+
+    def test_select_move_by_descriptor(self) -> None:
+        moves = self._make_moves()
+        payload = {"move": {"pawnId": "p2"}}
+        selected = _select_move(moves, payload)
+        self.assertIs(selected, moves[1])
+
+    def test_select_move_descriptor_no_match_raises(self) -> None:
+        moves = self._make_moves()
+        with self.assertRaises(ValueError):
+            _ = _select_move(moves, {"move": {"pawnId": "missing"}})
 
 
 if __name__ == "__main__":

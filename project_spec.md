@@ -286,7 +286,7 @@ Assuming a Cloud Run-style service with JSON endpoints (names illustrative):
 ### 5.4 In-Game Screen
 
 - Show:
-  - Board with pawns for all seats.
+  - A basic **visual board** with pawns for all seats (not just a raw JSON dump of game state).
   - Indicator of current player turn and drawn card.
   - Simple move UI:
     - Highlight selected pawn and possible destinations.
@@ -436,7 +436,7 @@ All rules in `rules.md` must be covered by automated tests.
    - Implement Join Game list and join flow.
 
 6. **Frontend in-game UI**
-   - Implement minimal board visualization and pawn rendering.
+   - Implement a basic visual board representation with pawns for all seats, not just a raw JSON dump of game state.
    - Implement move selection UX including complex cards.
    - Wire Firestore listeners to re-render based on `losiento_games/{gameId}`.
 
@@ -581,8 +581,8 @@ This section tracks the current implementation status against the spec.
     - **Upcoming work – advanced card behaviors & selection (ls-11):**
       - Refine 11-switch behavior to fully match the spec (e.g., handling slide interactions when the switching pawn lands on a slide start and auditing remaining edge cases).
       - Expand `Sorry!` targeting to consider all legal target pawns and encode those options as legal moves.
-      - Define a richer `clientMovePayload` format (beyond the current optional 0-based `moveIndex`) and validate that the payload corresponds to one of the legal moves provided by `get_legal_moves`.
-      - Change `play_move` to **require** a valid `clientMovePayload` for human players (except trivial single-move cases) instead of defaulting to the first legal move.
+      - The backend now supports a richer `clientMovePayload` schema for selecting among legal moves; remaining work is to **document** this schema clearly and integrate it with the frontend move-selection UI.
+      - Human `play_move` calls now require a valid move selection payload whenever there is more than one legal move; the only case where the payload can be omitted is when exactly one legal move exists.
       - Bots already choose a random legal move from `get_legal_moves`; remaining selection work is focused on human move specification and advanced card behaviors.
 
 - **In-memory persistence & gameplay**
@@ -596,7 +596,11 @@ This section tracks the current implementation status against the spec.
       - Draws from an authoritative deck, uses the rules engine (`get_legal_moves` / `apply_move`) to apply card behavior, and advances the turn.
       - Enforces basic turn ownership (`not_your_turn`, `not_in_game`) and game lifecycle (`game_not_started`, `game_over`).
       - Implements card `2` extra-draw behavior.
-      - Supports an optional `payload.moveIndex` (0-based) allowing the client to select among legal moves for the drawn card; when `moveIndex` is missing or invalid, the first legal move is used.
+      - Uses a shared move-selection helper that interprets a `clientMovePayload` provided in the HTTP body:
+        - Supports `payload.moveIndex` (0-based) to pick a specific move out of the legal moves list.
+        - Also supports `payload.move` as a structured descriptor (e.g. `{ pawnId, targetPawnId, secondaryPawnId, direction, steps, secondaryDirection, secondarySteps }`) which is matched against fields of the engine `Move` objects.
+        - If there is **exactly one** legal move, the payload may be omitted and that move is applied.
+        - If there are **multiple** legal moves and the payload is missing or does not uniquely match any legal move, `play_move` raises a validation error (e.g. `move_selection_required`, `invalid_move_selection_*`).
     - `bot_step(...)`:
       - Verifies it is a bot’s turn and then draws and applies a card for that bot via the same rules engine API.
       - Implements card `2` extra-draw behavior for bots as well.
@@ -614,7 +618,7 @@ This section tracks the current implementation status against the spec.
       - `leave_game` – handles host and non-host leave according to the spec (host aborts the game and clears all `activeGameId`s; non-host converts their seat to a bot and clears their own `activeGameId`).
       - `kick_player` – host-only, converts the target seat to a bot and clears the kicked user’s `activeGameId`.
       - `configure_seat` – host-only in lobby, toggles seats between bot and human, clearing `activeGameId` when converting a human seat to a bot.
-      - `play_move` – applies human moves using the rules engine and serialized `GameState` stored in the Firestore document, including card draws (with card `2` extra-draw) and optional `moveIndex` selection mirroring the in-memory implementation.
+      - `play_move` – applies human moves using the rules engine and serialized `GameState` stored in the Firestore document, including card draws (with card `2` extra-draw) and the same `clientMovePayload`-based selection semantics as the in-memory implementation (`moveIndex` or a structured `move` descriptor, with selection required when multiple moves exist).
       - `bot_step` – applies bot turns using the rules engine with random legal move selection and card `2` extra-draw semantics, mirroring the in-memory implementation.
       - `to_client` – shapes a Firestore game document into the client-facing JSON payload.
     - Firestore-backed **concurrency** is implemented:
@@ -625,6 +629,7 @@ This section tracks the current implementation status against the spec.
   - Notes:
     - No Lo Siento-specific frontend yet; backend is ready to serve static files from `losiento/frontend` when created.
     - apps/web has not yet been updated to expose a Lo Siento route/page or iframe.
+    - The first in-game UI should be a **basic visual board-and-pawns view**, not just a JSON representation of game state (even a simple grid with colored pawn markers is acceptable for v1).
 
 - **Terraform / Cloud Run deployment**
   - **Status:** Not started
@@ -650,7 +655,7 @@ This section tracks the current implementation status against the spec.
    - Refine the rules engine’s advanced behaviors:
      - Audit and refine 11-switch and its interaction with slides and Safety Zones.
      - Expand Sorry! targeting to consider all legal target pawns and encode those options as legal moves.
-   - Define and document the `clientMovePayload` schema (generalizing the current optional `moveIndex`) and update `play_move` to validate it against `get_legal_moves`.
+   - The backend now validates `clientMovePayload` against `get_legal_moves` and requires a selection when multiple moves exist; remaining work is to fully document the schema and wire it through the frontend.
    - Selection for bots is already random among legal moves; focus remaining selection work on human move choice and complex card semantics.
 
 3. **Refine Integration Status**
