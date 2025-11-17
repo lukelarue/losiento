@@ -32,6 +32,7 @@
   let currentGame = null;
   let pollTimer = null;
   let selectedPawnId = null;
+  let legalMoverPawnIds = new Set();
 
   function showToast(message, millis = 2500) {
     toastEl.textContent = message;
@@ -106,6 +107,8 @@
   function renderFromGame() {
     if (!currentGame) {
       stopPolling();
+      legalMoverPawnIds = new Set();
+      selectedPawnId = null;
       setScreen("noGame");
       return;
     }
@@ -118,6 +121,7 @@
       renderGame();
       setScreen("game");
       startPolling();
+      refreshLegalMovers();
     } else {
       // finished or aborted
       renderGame();
@@ -280,14 +284,18 @@
           const occ = occupants[0];
           const dot = document.createElement("div");
           dot.className = `pawn-dot ${occ.color}`;
+          const isLegalMover = legalMoverPawnIds && legalMoverPawnIds.has(occ.pawnId);
+          if (isLegalMover) {
+            dot.classList.add("legal-mover");
+            dot.addEventListener("click", () => {
+              selectedPawnId = occ.pawnId;
+              renderGame();
+            });
+          }
           if (selectedPawnId && occ.pawnId === selectedPawnId) {
             dot.classList.add("pawn-selected");
           }
           dot.textContent = String(occ.seatIndex);
-          dot.addEventListener("click", () => {
-            selectedPawnId = occ.pawnId;
-            renderGame();
-          });
           cell.appendChild(dot);
         }
 
@@ -451,6 +459,7 @@
       });
       currentGame = data;
       selectedPawnId = null;
+      legalMoverPawnIds = new Set();
       renderFromGame();
     } catch (err) {
       showToast(`Move failed: ${err.message}`);
@@ -478,6 +487,42 @@
       renderFromGame();
     } catch (err) {
       showToast(`Bot step failed: ${err.message}`);
+    }
+  }
+
+  async function refreshLegalMovers() {
+    try {
+      if (!currentGame || !currentGame.state || currentGame.phase !== "active") {
+        legalMoverPawnIds = new Set();
+        selectedPawnId = null;
+        return;
+      }
+      const state = currentGame.state;
+      if (state.result !== "active") {
+        legalMoverPawnIds = new Set();
+        selectedPawnId = null;
+        return;
+      }
+
+      const resp = await fetch(
+        `${API_BASE}/legal-movers?game_id=${encodeURIComponent(currentGame.gameId)}`,
+        { method: "GET" }
+      );
+      if (!resp.ok) {
+        legalMoverPawnIds = new Set();
+        selectedPawnId = null;
+        return;
+      }
+      const data = await resp.json();
+      const ids = Array.isArray(data.pawnIds) ? data.pawnIds : [];
+      legalMoverPawnIds = new Set(ids);
+      if (selectedPawnId && !legalMoverPawnIds.has(selectedPawnId)) {
+        selectedPawnId = null;
+      }
+      renderGame();
+    } catch (err) {
+      // Advisory only; ignore errors.
+      legalMoverPawnIds = new Set();
     }
   }
 

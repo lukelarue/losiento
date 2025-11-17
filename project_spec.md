@@ -232,6 +232,15 @@ from the JSON body; the bodies below omit `userId` for that reason.
     - If none, return 404 (`{"detail": "no game"}`).
     - Otherwise, return the current game shaped via `to_client` (including `state` inner payload for board and turn info).
 
+- `GET /api/losiento/legal-movers`
+  - Query: `?game_id=<id>`.
+  - Behavior:
+    - Ensure the caller is a player in the specified game, the game `phase == "active"`, `state.result == "active"`, and it is the caller’s turn.
+    - Reconstruct a `GameState` (in-memory or from Firestore), make a **copy** of it, and simulate drawing the next card on the copy using `_draw_card`.
+    - Use the rules engine `get_legal_moves` to compute legal moves for the caller’s seat and that card.
+    - Return `{ gameId, pawnIds }` where `pawnIds` is the set of `pawnId`s that have at least one legal move for the upcoming card.
+    - This endpoint is **advisory** and does not mutate the stored game state; it exists to help the frontend highlight pawns that can move.
+
 - `POST /api/losiento/play`
   - Body: `{ game_id, payload }` where `payload` is the `clientMovePayload`.
   - Behavior:

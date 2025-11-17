@@ -455,6 +455,31 @@ class PersistenceInMemoryTests(unittest.TestCase):
         self.assertTrue(state_after.discard_pile, "expected at least one card in discard after drawing")
         self.assertGreater(len(state_after.deck), 0, "deck should have been rebuilt when empty")
 
+    def test_preview_legal_movers_uses_copy_and_returns_pawn_ids(self) -> None:
+        persistence, game_id = self._make_started_game()
+        game = persistence.games[game_id]
+        state = game["state"]
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        seat0_ids = {p.pawn_id for p in pawns0}
+
+        # Force next card to be 1 so at least one pawn for seat 0 can move.
+        state.deck = ["1"]
+        state.discard_pile = []
+
+        deck_before = list(state.deck)
+        discard_before = list(state.discard_pile)
+
+        result = persistence.preview_legal_movers(game_id, "u0")
+
+        # Real state must not be mutated by the preview.
+        self.assertEqual(deck_before, state.deck)
+        self.assertEqual(discard_before, state.discard_pile)
+
+        pawn_ids = set(result.get("pawnIds") or [])
+        self.assertTrue(pawn_ids, "expected at least one legal mover pawnId")
+        self.assertTrue(pawn_ids.issubset(seat0_ids))
+
     def test_win_condition_sets_result_and_blocks_further_moves(self) -> None:
         persistence, game_id = self._make_started_game()
         game = persistence.games[game_id]

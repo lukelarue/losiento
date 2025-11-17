@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import os
 import uuid
+import copy
 
 try:
     from google.cloud import firestore  # type: ignore
@@ -531,6 +532,33 @@ class InMemoryPersistence:
                 state.phase = "finished"
                 game["phase"] = "finished"
                 return
+
+    def preview_legal_movers(self, game_id: str, user_id: str) -> Dict[str, Any]:
+        """Return pawnIds for the current player's legal moves for the next card.
+
+        This simulates drawing the next card on a *copy* of the GameState so the
+        authoritative deck/discard in memory are not mutated. The result is
+        advisory and used by the frontend to highlight legal movers.
+        """
+
+        game = self._get_game(game_id)
+        state = game.get("state")
+        if not isinstance(state, GameState):
+            raise ValueError("game_not_started")
+        if state.result != "active":
+            raise ValueError("game_over")
+
+        seat_index = self._find_seat_index_for_user(game, user_id)
+        if seat_index is None:
+            raise ValueError("not_in_game")
+        if seat_index != state.current_seat_index:
+            raise ValueError("not_your_turn")
+
+        tmp_state = copy.deepcopy(state)
+        card = self._draw_card(tmp_state)
+        moves = get_legal_moves(tmp_state, seat_index, card)
+        pawn_ids = sorted({m.pawn_id for m in moves if m.seat_index == seat_index})
+        return {"gameId": game_id, "pawnIds": pawn_ids}
 
     def play_move(self, game_id: str, user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         game = self._get_game(game_id)
@@ -1227,6 +1255,45 @@ class FirestorePersistence:
         if not game_snap.exists:
             return None
         return self._snapshot_to_game(game_snap)
+
+    def preview_legal_movers(self, game_id: str, user_id: str) -> Dict[str, Any]:
+        """Return pawnIds for the current player's legal moves for the next card.
+
+        This reconstructs a GameState from Firestore, simulates a single card
+        draw on a *copy* of that state (without mutating the stored document),
+        and uses the rules engine to compute legal moves. The result is
+        advisory and used by the frontend to highlight legal movers.
+        """
+
+        game_ref = self._games_collection().document(game_id)
+        game_snap = game_ref.get()
+        if not game_snap.exists:
+            raise ValueError("game_not_found")
+
+        data = game_snap.to_dict() or {}
+        if data.get("phase") != "active":
+            raise ValueError("game_not_started")
+
+        state = self._decode_state(game_id, data)
+        if state.result != "active":
+            raise ValueError("game_over")
+
+        seats_data: List[Dict[str, Any]] = data.get("seats") or []
+        seat_index: Optional[int] = None
+        for s in seats_data:
+            if s.get("playerId") == user_id:
+                seat_index = int(s.get("index", 0))
+                break
+        if seat_index is None:
+            raise ValueError("not_in_game")
+        if seat_index != state.current_seat_index:
+            raise ValueError("not_your_turn")
+
+        tmp_state = copy.deepcopy(state)
+        card = self._draw_card(tmp_state)
+        moves = get_legal_moves(tmp_state, seat_index, card)
+        pawn_ids = sorted({m.pawn_id for m in moves if m.seat_index == seat_index})
+        return {"gameId": game_id, "pawnIds": pawn_ids}
 
     def play_move(self, game_id: str, user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Apply a human player's move for a Firestore-backed game.

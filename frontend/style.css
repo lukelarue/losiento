@@ -261,6 +261,11 @@ button:disabled {
   background: #4ade80;
 }
 
+.pawn-dot.legal-mover {
+  box-shadow: 0 0 0 2px #38bdf8;
+  cursor: pointer;
+}
+
 .pawn-dot.pawn-selected {
   box-shadow: 0 0 0 2px #fbbf24, 0 0 0 4px #111827;
 }

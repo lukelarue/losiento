@@ -213,6 +213,23 @@ def create_app(persistence=None) -> FastAPI:
             raise HTTPException(status_code=404, detail="no game")
         return app.state.persistence.to_client(doc, user_id)
 
+    @app.get(f"{API_BASE}/legal-movers")
+    def get_legal_movers(game_id: str, user_id: str = Depends(get_user_id)):
+        """Return pawnIds for the caller's legal moves for the next card.
+
+        This uses the persistence preview_legal_movers helper, which simulates a
+        draw on a copied GameState and computes legal moves via the rules
+        engine without mutating the authoritative game state.
+        """
+
+        try:
+            return app.state.persistence.preview_legal_movers(game_id, user_id)
+        except ValueError as e:
+            msg = str(e)
+            if msg == "game_not_found":
+                raise HTTPException(status_code=404, detail=msg)
+            raise HTTPException(status_code=400, detail=msg)
+
     @app.post(f"{API_BASE}/play")
     def play_move(body: PlayMoveBody, user_id: str = Depends(get_user_id)):
         try:
