@@ -436,6 +436,25 @@ class PersistenceInMemoryTests(unittest.TestCase):
         self.assertEqual(state_after.turn_number, turn_before)
         self.assertEqual(state_after.current_seat_index, current_before)
 
+    def test_deck_rebuilds_when_empty_and_clears_discard(self) -> None:
+        persistence, game_id = self._make_started_game()
+        game = persistence.games[game_id]
+        state = game["state"]
+
+        # Simulate an exhausted deck with a sentinel value in discard.
+        state.deck = []
+        state.discard_pile = ["X"]
+
+        # Should not raise: play_move will rebuild the deck and draw a card.
+        persistence.play_move(game_id, "u0", {"moveIndex": 0})
+
+        state_after = persistence.games[game_id]["state"]
+        # The old discard contents should be cleared, and at least one new card
+        # should be present from the rebuilt deck.
+        self.assertNotIn("X", state_after.discard_pile)
+        self.assertTrue(state_after.discard_pile, "expected at least one card in discard after drawing")
+        self.assertGreater(len(state_after.deck), 0, "deck should have been rebuilt when empty")
+
     def test_win_condition_sets_result_and_blocks_further_moves(self) -> None:
         persistence, game_id = self._make_started_game()
         game = persistence.games[game_id]

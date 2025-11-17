@@ -261,6 +261,10 @@ button:disabled {
   background: #4ade80;
 }
 
+.pawn-dot.pawn-selected {
+  box-shadow: 0 0 0 2px #fbbf24, 0 0 0 4px #111827;
+}
+
 .side-panels {
   display: flex;
   flex-direction: column;

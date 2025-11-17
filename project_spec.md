@@ -262,6 +262,143 @@ from the JSON body; the bodies below omit `userId` for that reason.
 
 ---
 
+### 4.4 `clientMovePayload` Schema
+
+Human moves are specified using a `clientMovePayload` object, passed as `payload` in
+`POST /api/losiento/play`. This payload is **not** trusted; the backend always
+derives legal moves from the rules engine and then uses the payload only to
+choose **which** legal move to apply.
+
+The helper `_select_move(moves, payload)` implements this selection logic and
+is used by both `InMemoryPersistence` and `FirestorePersistence`.
+
+Shape:
+
+```jsonc
+{
+  "moveIndex": 0,              // optional, integer index into legal moves
+  "move": {                    // optional, structured descriptor
+    "pawnId": "...",         // string
+    "targetPawnId": "...",   // string or null
+    "secondaryPawnId": "...",// string or null (for 7-split)
+    "direction": "forward",  // "forward" | "backward" | null
+    "steps": 7,               // integer or null
+    "secondaryDirection": "forward", // for 7-split
+    "secondarySteps": 3       // integer or null
+  }
+}
+```
+
+Selection rules:
+
+- If there are **no** legal moves, the backend rejects the request
+  (`no_legal_moves`).
+- If `payload` is missing/empty and there is **exactly one** legal move, that
+  move is applied.
+- If `moveIndex` is a valid integer within the legal-move list, that move is
+  chosen.
+- Otherwise, if `move` is provided, the backend:
+  - Starts with the full list of legal moves.
+  - Filters by each present field (`pawnId`, `targetPawnId`, etc.), keeping
+    only moves whose corresponding `Move` attributes match exactly.
+  - If exactly one candidate remains, that move is applied.
+  - If no candidates remain, the request is rejected as
+    `invalid_move_selection_no_match`.
+  - If multiple candidates remain, the request is rejected as
+    `invalid_move_selection_ambiguous`.
+- If none of the above apply and there is more than one legal move, the request
+  is rejected as `move_selection_required`.
+
+This ensures that:
+
+- Clients can use the **simple index** form during early development or when
+  they have the legal-move list available.
+- More advanced clients can use a **structured descriptor** that is robust
+  across different internal move orderings.
+
+Examples:
+
+- **Simple numeric move (card 3)**
+
+  Legal moves from the engine might include:
+
+  ```jsonc
+  [
+    { "pawn_id": "p0", "direction": "forward", "steps": 3, ... },
+    { "pawn_id": "p1", "direction": "forward", "steps": 3, ... }
+  ]
+  ```
+
+  The client may choose either:
+
+  ```json
+  { "moveIndex": 0 }
+  ```
+
+  or
+
+  ```json
+  { "move": { "pawnId": "p1", "direction": "forward", "steps": 3 } }
+  ```
+
+- **7-split**
+
+  A 7-split move is encoded in the engine `Move` as:
+
+  ```jsonc
+  {
+    "card": "7",
+    "seat_index": 0,
+    "pawn_id": "pA",
+    "direction": "forward",
+    "steps": 4,
+    "secondary_pawn_id": "pB",
+    "secondary_direction": "forward",
+    "secondary_steps": 3
+  }
+  ```
+
+  The client can select this move via:
+
+  ```json
+  {
+    "move": {
+      "pawnId": "pA",
+      "secondaryPawnId": "pB",
+      "direction": "forward",
+      "steps": 4,
+      "secondaryDirection": "forward",
+      "secondarySteps": 3
+    }
+  }
+  ```
+
+- **11-switch**
+
+  For a switch move, the engine `Move` will have `card = "11"` and
+  `target_pawn_id` set to the opponent pawn to swap with. The client can select
+  that move with:
+
+  ```json
+  { "move": { "pawnId": "myPawnId", "targetPawnId": "opponentPawnId" } }
+  ```
+
+- **Sorry!**
+
+  For a Sorry! move, the engine `Move` will have `card = "Sorry!"`,
+  `pawn_id` set to the pawn leaving Start, and `target_pawn_id` set to the
+  opponent pawn being bumped. The client can select a particular target via:
+
+  ```json
+  { "move": { "pawnId": "myStartPawnId", "targetPawnId": "targetPawnId" } }
+  ```
+
+Note: the current prototype UI uses the simple `"moveIndex": 0` form for
+human moves; a future, richer UI can use the structured `move` descriptors to
+allow explicit user choice when multiple legal moves exist.
+
+---
+
 ## 5. Frontend / UX Flows
 
 ### 5.1 Entry Point
@@ -573,6 +710,7 @@ This section tracks the current implementation status against the spec.
   - Notes:
     - `losiento_game/models.py` defines `Card`, `PawnPosition`, `Pawn`, `Seat`, `GameSettings`, `GameState`, and `game_state_to_dict` consistent with the spec.
     - `losiento_game/engine.py` implements deck construction and shuffling with the correct 45-card composition.
+    - `InMemoryPersistence._ensure_deck` and the Firestore equivalent rebuild the deck when it is exhausted (using the configured seed when present) and clear the `discard_pile` before drawing further cards.
 
 - **Board geometry (outer track, slides, Safety Zones)**
   - **Status:** Completed (geometry wired into code)
@@ -581,7 +719,7 @@ This section tracks the current implementation status against the spec.
     - `losiento_game/engine.py` defines constants for track length, segment layout, slide positions, and safe-zone entry indices derived from those rules.
 
 - **Rules engine: movement & cards**
-  - **Status:** Partially implemented (advanced behaviors & selection pending)
+  - **Status:** Implemented (initial; frontend move-selection UI pending)
   - Notes:
     - Core movement, bumping, slides, Safety Zones, Home entry, and basic card behavior are implemented in pure engine functions `get_legal_moves` and `apply_move` in `losiento_game/engine.py`.
     - `InMemoryPersistence.play_move(...)` and `bot_step(...)` now use this engine API: draw a card, enumerate legal moves, and apply the first legal move (matching the previous heuristic).
@@ -594,11 +732,10 @@ This section tracks the current implementation status against the spec.
       - `get_legal_moves(state, seat_index, card)` enumerates legal moves without mutating state.
       - `apply_move(state, move)` applies a chosen move and returns a new `GameState`.
       - `InMemoryPersistence.play_move` / `bot_step` are wired to call this engine API instead of their own movement logic.
-    - **Upcoming work – advanced card behaviors & selection (ls-11):**
-      - Sorry! targeting and bumping behavior now considers all legal opponent pawns on the track and correctly applies slide rules (including when landing on another color's slide start); remaining card-specific logic is limited to clearly documenting intentional simplifications (e.g., 11-switch does not currently trigger slides when swapping onto a slide start).
-      - The backend now supports a richer `clientMovePayload` schema for selecting among legal moves; remaining work is to **document** this schema clearly and integrate it with the frontend move-selection UI.
-      - Human `play_move` calls now require a valid move selection payload whenever there is more than one legal move; the only case where the payload can be omitted is when exactly one legal move exists.
-      - Bots already choose a random legal move from `get_legal_moves`; remaining selection work is focused on human move specification and complex move choice rather than additional card semantics.
+    - **Remaining work – frontend move-selection UI (ls-11 follow-up):**
+      - Advanced card behaviors (7-split, 11-switch with track-only targets, Sorry! targeting with slide interactions) are implemented and covered by tests in the rules engine and persistence layers.
+      - The backend validates `clientMovePayload` against `get_legal_moves` using `_select_move` and the schema is documented (section 4.4); bots already choose a random legal move from `get_legal_moves`.
+      - Remaining selection work is frontend-only: surfacing legal-move options to humans and allowing them to send a structured `payload.move` instead of always defaulting to `{ moveIndex: 0 }`.
 
 - **In-memory persistence & gameplay**
   - **Status:** Implemented (initial gameplay)
@@ -647,7 +784,13 @@ This section tracks the current implementation status against the spec.
       - A lobby screen to host or join games via the existing `/api/losiento/host`, `/join`, `/joinable`, `/leave`, and `/start` endpoints.
       - An in-game screen with a **basic visual board**: a 60-cell track grid with colored pawn markers per seat, plus simple Start / Safety / Home summaries per color.
       - The in-game header displays the current turn, current seat, and the last drawn card (from the discard pile), and the Start/Safety summaries visually highlight the current seat.
-      - Simple controls for `Play turn` (which currently sends `payload: { moveIndex: 0 }`), `Bot step`, and `Leave game`.
+      - Simple controls for `Play turn`, `Bot step`, and `Leave game`.
+      - A **minimal move-selection UX**:
+        - Clicking on a pawn dot on the track highlights it and stores its `pawnId` as the preferred pawn for the next human move.
+        - When `Play turn` is pressed, the frontend sends either:
+          - `payload: { move: { pawnId } }` if a pawn has been selected, or
+          - `payload: { moveIndex: 0 }` if no pawn has been selected.
+        - The backend uses `_select_move` to match this payload against the legal moves for the drawn card. Because the backend does not yet expose the full legal-move list to the client, this UI is a **heuristic**: it works well when pawnId alone uniquely identifies the intended move, but for complex cards with multiple options (e.g. 7-split) the selection may still be ambiguous or rejected. A richer move-selection UI (with explicit per-move choices) remains future work.
     - apps/web has not yet been updated to expose a Lo Siento route/page or iframe.
     - The first in-game UI requirement (a basic visual board-and-pawns view, not just JSON) is now satisfied at prototype level; further work is needed for richer UX and explicit move selection when multiple moves exist.
 
@@ -672,12 +815,10 @@ This section tracks the current implementation status against the spec.
    - Foundational unit tests now exist under `losiento/tests/test_engine_basic.py`, covering deck composition, core movement, slides (including cross-color and slide-into-safety), Safety Zones, Home entry, self-bump prohibition, and key card behaviors (7-split, 10 forward/backward fallback, 11 forward/switch with restrictions, and Sorry! targeting/bumps).
    - Remaining coverage work (ls-12) focuses on a few gaps and edge-case combinations, such as deck/draw sequencing and 2’s extra-draw behavior, plus any additional regression tests discovered during playtesting.
 
-2. **Implement advanced card behaviors & selection (ls-11 – in progress)**
-   - Refine the rules engine’s advanced behaviors:
-     - Audit and refine 11-switch and its interaction with slides and Safety Zones.
-     - Expand Sorry! targeting to consider all legal target pawns and encode those options as legal moves.
-   - The backend now validates `clientMovePayload` against `get_legal_moves` and requires a selection when multiple moves exist; remaining work is to fully document the schema and wire it through the frontend.
-   - Selection for bots is already random among legal moves; focus remaining selection work on human move choice and complex card semantics.
+2. **Implement advanced card behaviors & selection (COMPLETED – ls-11)**
+   - Advanced card behaviors (7-split, 11-switch with restrictions, Sorry! targeting including slide interactions) are implemented in `losiento_game/engine.py` and exercised via `InMemoryPersistence` / `FirestorePersistence`.
+   - The backend validates `clientMovePayload` against `get_legal_moves` using `_select_move`, and the schema is documented in section 4.4; bots already choose random legal moves.
+   - Remaining work in this area is frontend-focused: building a richer in-game UI that can display the set of legal moves for the current card and send an explicit `payload.move` reflecting the user’s choice.
 
 3. **Refine Integration Status**
    - Once the advanced behaviors and selection logic are in place, update this section to mark the rules engine as **Implemented (initial)** and adjust notes to describe any remaining edge cases or future enhancements.

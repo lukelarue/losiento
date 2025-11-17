@@ -31,6 +31,7 @@
 
   let currentGame = null;
   let pollTimer = null;
+  let selectedPawnId = null;
 
   function showToast(message, millis = 2500) {
     toastEl.textContent = message;
@@ -252,7 +253,7 @@
         const idx = pos.index ?? 0;
         const key = idx;
         if (!trackMap.has(key)) trackMap.set(key, []);
-        trackMap.get(key).push({ seatIndex, color });
+        trackMap.get(key).push({ seatIndex, color, pawnId: p.pawnId });
       } else if (pos.type === "start") {
         startCount[seatIndex] = (startCount[seatIndex] || 0) + 1;
       } else if (pos.type === "safety") {
@@ -279,7 +280,14 @@
           const occ = occupants[0];
           const dot = document.createElement("div");
           dot.className = `pawn-dot ${occ.color}`;
+          if (selectedPawnId && occ.pawnId === selectedPawnId) {
+            dot.classList.add("pawn-selected");
+          }
           dot.textContent = String(occ.seatIndex);
+          dot.addEventListener("click", () => {
+            selectedPawnId = occ.pawnId;
+            renderGame();
+          });
           cell.appendChild(dot);
         }
 
@@ -433,11 +441,16 @@
   async function handlePlayMove() {
     if (!currentGame) return;
     try {
+      const payload =
+        selectedPawnId != null
+          ? { move: { pawnId: selectedPawnId } }
+          : { moveIndex: 0 };
       const data = await api("/play", {
         method: "POST",
-        body: JSON.stringify({ game_id: currentGame.gameId, payload: { moveIndex: 0 } }),
+        body: JSON.stringify({ game_id: currentGame.gameId, payload }),
       });
       currentGame = data;
+      selectedPawnId = null;
       renderFromGame();
     } catch (err) {
       showToast(`Move failed: ${err.message}`);
