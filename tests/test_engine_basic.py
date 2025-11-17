@@ -117,6 +117,21 @@ class EngineBasicTests(unittest.TestCase):
         self.assertEqual(mover_new.position.index, 0)
         self.assertEqual(blocker_new.position.kind, "start")
 
+    def test_self_bump_moves_are_not_generated(self) -> None:
+        state, _, _ = self._make_basic_state()
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawn_a = pawns0[0]
+        pawn_b = pawns0[1]
+
+        pawn_a.position = PawnPosition(kind="track", index=3)
+        pawn_b.position = PawnPosition(kind="track", index=4)
+
+        moves = get_legal_moves(state, seat_index=0, card="1")
+        moving_pawns = {m.pawn_id for m in moves}
+
+        self.assertNotIn(pawn_a.pawn_id, moving_pawns, "moves that would land on own pawn should be excluded")
+
     def test_safety_to_home_exact_count(self) -> None:
         state, _, _ = self._make_basic_state()
 
@@ -132,6 +147,35 @@ class EngineBasicTests(unittest.TestCase):
         new_state = apply_move(state, moves[0])
         pawn_new = next(p for p in new_state.pawns if p.pawn_id == pawn.pawn_id)
         self.assertEqual(pawn_new.position.kind, "home")
+
+    def test_slide_on_other_color_still_applies_and_bumps(self) -> None:
+        state, _, _ = self._make_basic_state()
+
+        slide_start = first_slide_indices(1)[0]
+        before_idx = (slide_start - 1) % TRACK_LEN
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawns1 = [p for p in state.pawns if p.seat_index == 1]
+
+        mover = pawns0[0]
+        mover.position = PawnPosition(kind="track", index=before_idx)
+
+        blocker = pawns1[0]
+        blocker.position = PawnPosition(kind="track", index=slide_start)
+
+        moves = get_legal_moves(state, seat_index=0, card="1")
+        self.assertTrue(moves, "expected a legal move landing on other color's slide start")
+
+        new_state = apply_move(state, moves[0])
+        mover_new = next(p for p in new_state.pawns if p.pawn_id == mover.pawn_id)
+        blocker_new = next(p for p in new_state.pawns if p.pawn_id == blocker.pawn_id)
+
+        other_slide_indices = first_slide_indices(1)
+        slide_end = other_slide_indices[-1]
+
+        self.assertEqual(mover_new.position.kind, "track")
+        self.assertEqual(mover_new.position.index, slide_end)
+        self.assertEqual(blocker_new.position.kind, "start")
 
     def test_card11_forward_and_switch(self) -> None:
         state, seats, _ = self._make_basic_state()

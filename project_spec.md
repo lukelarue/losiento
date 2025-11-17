@@ -173,71 +173,86 @@ Requirements:
 
 ### 4.2 HTTP / RPC Endpoints
 
-Assuming a Cloud Run-style service with JSON endpoints (names illustrative):
+The actual FastAPI service exposes JSON endpoints under `API_BASE = "/api/losiento"`. The
+backend derives `userId` from request headers (IAP / forwarded / `X-User-Id`) rather than
+from the JSON body; the bodies below omit `userId` for that reason.
 
-- `POST /host_game`
-  - Body: `{ maxSeats, userId, displayName }`.
+- `POST /api/losiento/host`
+  - Body: `{ max_seats, display_name? }`.
   - Behavior:
-    - Ensure user has no active game.
-    - Create `losiento_games/{gameId}` in `lobby` phase with seats configured.
-    - Set `activeGameId` for user.
+    - Ensure caller has no active game.
+    - Create `losiento_games/{gameId}` in `lobby` phase with seats configured (host in seat 0).
+    - Set `activeGameId` for the host user.
 
-- `POST /join_game`
-  - Body: `{ gameId, userId, displayName }`.
+- `GET /api/losiento/joinable`
   - Behavior:
-    - Ensure game is in `lobby` and has an open human seat.
-    - Ensure user has no active game.
-    - Claim a seat, update `seats` and `updatedAt`.
-    - Set `activeGameId` for user.
+    - List lobby games with at least one open human seat.
+    - Returns `{ games: [{ gameId, hostName, currentPlayers, maxSeats }, ...] }`.
 
-- `POST /leave_game`
-  - Body: `{ gameId, userId }`.
+- `POST /api/losiento/join`
+  - Body: `{ game_id, display_name? }`.
   - Behavior:
-    - If user is host and game is `active`, mark game as `aborted`, set `result = "aborted"`, `abortedReason = "host_left"`, clear `activeGameId` for all players.
-    - If user is host and game is `lobby`, delete or mark game as `aborted`, clear `activeGameId` for all players.
-    - If user is non-host:
+    - Ensure caller has no other active game.
+    - Ensure target game is in `lobby` and has an open human seat.
+    - Claim a seat, update `seats` / `updatedAt`, set caller’s `activeGameId`.
+
+- `POST /api/losiento/leave`
+  - Body: `{ game_id }`.
+  - Behavior:
+    - If caller is host:
+      - Mark game as `aborted` (if `active`) or otherwise terminate the lobby.
+      - Clear `activeGameId` for all players in that game.
+    - If caller is non-host:
       - Convert their seat to `isBot = true`, `playerId = null`, `status = "bot"`.
       - Clear their `activeGameId`.
 
-- `POST /kick_player`
-  - Body: `{ gameId, hostId, seatIndex }`.
+- `POST /api/losiento/kick`
+  - Body: `{ game_id, seat_index }`.
   - Behavior:
     - Verify caller is host.
     - For lobby or active game:
       - Convert target seat to `isBot = true`, `playerId = null`, `status = "bot"`.
       - Clear kicked user’s `activeGameId`.
 
-- `POST /configure_seat`
-  - Body: `{ gameId, hostId, seatIndex, isBot }` (allowed only in `lobby`).
+- `POST /api/losiento/configure-seat`
+  - Body: `{ game_id, seat_index, is_bot }` (allowed only in `lobby`).
   - Behavior:
     - Host toggles seat between bot/human (respecting at least 1 human total and 2+ total players before start).
 
-- `POST /start_game`
-  - Body: `{ gameId, hostId }`.
+- `POST /api/losiento/start`
+  - Body: `{ game_id }`.
   - Behavior:
     - Validate `phase == "lobby"` and there are at least 2 total seats occupied (human or bot) and at least 1 human.
     - Initialize `state` using rules engine and shuffled deck.
     - Set `phase = "active"`.
 
-- `POST /play_move`
-  - Body: `{ gameId, userId, clientMovePayload }`.
+- `GET /api/losiento/state`
   - Behavior:
-    - Load game doc.
-    - Verify `phase == "active"`, `userId` matches the player for `state.currentSeatIndex`, and seat is not bot.
-    - Derive card + legal moves using rules engine.
-    - Validate `clientMovePayload` matches one of the legal moves.
-    - Apply move using rules engine.
-    - Append move doc to `moves` subcollection.
-    - Update `state`, including `turnNumber`, `currentSeatIndex`, `deck`, `discardPile`, `board`, `lastMove`, `winnerSeatIndex`, `result`.
+    - Look up caller’s `activeGameId` in `losiento_users/{userId}`.
+    - If none, return 404 (`{"detail": "no game"}`).
+    - Otherwise, return the current game shaped via `to_client` (including `state` inner payload for board and turn info).
 
-- `POST /bot_step`
-  - Body: `{ gameId }` (can be invoked by scheduled pings from clients or a backend loop).
+- `POST /api/losiento/play`
+  - Body: `{ game_id, payload }` where `payload` is the `clientMovePayload`.
   - Behavior:
-    - If `phase != "active"`, return.
-    - If `currentSeatIndex` is a bot seat and at least ~1 second has elapsed since last state update:
-      - Use rules engine to compute legal moves.
-      - Randomly select a move.
-      - Apply as in `play_move` with `playerId = null`.
+    - Load game doc for `game_id` and ensure caller is a player in that game.
+    - Verify `phase == "active"`, it is the caller’s turn, and the seat is not bot.
+    - Draw a card from the authoritative deck; derive legal moves via rules engine.
+    - Validate `payload` against legal moves using the shared move-selection helper:
+      - Supports `payload.moveIndex` or a structured `payload.move` descriptor.
+      - If multiple legal moves exist and payload is missing or ambiguous, reject the request.
+    - Apply the chosen move using the rules engine; for card `2`, draw and apply an extra move.
+    - Append a move doc under `losiento_games/{gameId}/moves` (Firestore implementation).
+    - Update `state` in the game document, including `turnNumber`, `currentSeatIndex`, `deck`, `discardPile`, `board`, `winnerSeatIndex`, `result`.
+
+- `POST /api/losiento/bot-step`
+  - Query: `?game_id=<id>`.
+  - Behavior:
+    - If game `phase != "active"`, return.
+    - Ensure `currentSeatIndex` is a bot seat and enough time has elapsed since last update.
+    - Draw a card, compute legal moves via rules engine, randomly select a move, and apply it.
+    - For card `2`, draw and apply an extra move chosen randomly from legal options.
+    - Update `state` and append a move doc (Firestore implementation).
 
 ### 4.3 Concurrency and Transactions
 
@@ -625,11 +640,15 @@ This section tracks the current implementation status against the spec.
       - `FirestorePersistence.play_move` and `bot_step` run inside Firestore transactions so that state updates and move logging are applied atomically and stale or concurrent updates are rejected.
 
 - **Frontend & iframe integration**
-  - **Status:** Not started
+  - **Status:** In progress (prototype)
   - Notes:
-    - No Lo Siento-specific frontend yet; backend is ready to serve static files from `losiento/frontend` when created.
+    - A minimal static frontend now exists under `losiento/frontend` (`index.html`, `style.css`, `app.js`) and is served by the backend root route when present.
+    - The prototype implements:
+      - A lobby screen to host or join games via the existing `/api/losiento/host`, `/join`, `/joinable`, `/leave`, and `/start` endpoints.
+      - An in-game screen with a **basic visual board**: a 60-cell track grid with colored pawn markers per seat, plus simple Start / Safety / Home summaries per color.
+      - Simple controls for `Play turn` (which currently sends `payload: { moveIndex: 0 }`), `Bot step`, and `Leave game`.
     - apps/web has not yet been updated to expose a Lo Siento route/page or iframe.
-    - The first in-game UI should be a **basic visual board-and-pawns view**, not just a JSON representation of game state (even a simple grid with colored pawn markers is acceptable for v1).
+    - The first in-game UI requirement (a basic visual board-and-pawns view, not just JSON) is now satisfied at prototype level; further work is needed for richer UX and explicit move selection when multiple moves exist.
 
 - **Terraform / Cloud Run deployment**
   - **Status:** Not started
@@ -649,7 +668,8 @@ This section tracks the current implementation status against the spec.
 
 1. **Extract pure rules engine API (COMPLETED – ls-10)**
    - `get_legal_moves` and `apply_move` are implemented in `losiento_game/engine.py` and `InMemoryPersistence.play_move` / `bot_step` are wired to use them.
-   - Initial unit tests for basic behavior have been added under `losiento/tests/test_engine_basic.py`; more coverage is needed for slides, Safety Zones, Home entry, and all card types (ls-12).
+   - Foundational unit tests now exist under `losiento/tests/test_engine_basic.py`, covering deck composition, core movement, slides (including cross-color and slide-into-safety), Safety Zones, Home entry, self-bump prohibition, and key card behaviors (7-split, 10 forward/backward fallback, 11 forward/switch with restrictions, and Sorry! targeting/bumps).
+   - Remaining coverage work (ls-12) focuses on a few gaps and edge-case combinations, such as deck/draw sequencing and 2’s extra-draw behavior, plus any additional regression tests discovered during playtesting.
 
 2. **Implement advanced card behaviors & selection (ls-11 – in progress)**
    - Refine the rules engine’s advanced behaviors:

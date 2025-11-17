@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lo Siento</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="app-header">
+        <h1>Lo Siento</h1>
+        <span class="app-subtitle">Prototype board UI</span>
+      </header>
+      <main class="app-main">
+        <section id="screen-loading" class="screen">
+          <p>Loading your game&hellip;</p>
+        </section>
+
+        <section id="screen-no-game" class="screen hidden">
+          <h2>No active game</h2>
+          <div class="layout-row">
+            <div class="card">
+              <h3>Host a game</h3>
+              <form id="host-form">
+                <label>
+                  Display name
+                  <input type="text" id="host-display-name" placeholder="Your name" />
+                </label>
+                <label>
+                  Seats (2&ndash;4)
+                  <input type="number" id="host-max-seats" min="2" max="4" value="2" />
+                </label>
+                <button type="submit">Host</button>
+              </form>
+            </div>
+
+            <div class="card">
+              <h3>Join a game</h3>
+              <button id="refresh-joinable">Refresh list</button>
+              <ul id="joinable-list" class="joinable-list"></ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="screen-lobby" class="screen hidden">
+          <h2>Lobby</h2>
+          <div id="lobby-meta" class="lobby-meta"></div>
+          <div id="lobby-seats" class="lobby-seats"></div>
+          <div class="lobby-actions">
+            <button id="start-game">Start game</button>
+            <button id="leave-lobby">Leave game</button>
+          </div>
+        </section>
+
+        <section id="screen-game" class="screen hidden">
+          <div class="game-top-bar">
+            <div id="game-meta" class="game-meta"></div>
+            <div class="game-actions">
+              <button id="play-move">Play turn</button>
+              <button id="bot-step-btn">Bot step</button>
+              <button id="leave-game">Leave game</button>
+            </div>
+          </div>
+
+          <div class="board-layout">
+            <div class="board-panel">
+              <h3>Track</h3>
+              <div id="track-grid" class="track-grid"></div>
+            </div>
+            <div class="side-panels">
+              <div class="card">
+                <h3>Start areas</h3>
+                <div id="start-areas"></div>
+              </div>
+              <div class="card">
+                <h3>Safety / Home</h3>
+                <div id="safety-home"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+      <footer class="app-footer">
+        <span>Lo Siento prototype UI &mdash; uses backend state at <code>/api/losiento</code></span>
+      </footer>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
