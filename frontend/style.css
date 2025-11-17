@@ -316,6 +316,11 @@ button:disabled {
   color: #bbf7d0;
 }
 
+.current-seat {
+  border-radius: 0.5rem;
+  background: rgba(59, 130, 246, 0.12);
+}
+
 .toast {
   position: fixed;
   left: 50%;

@@ -135,7 +135,7 @@
 
   function renderLobby() {
     const g = currentGame;
-    lobbyMetaEl.textContent = `Game ${g.gameId} b7 Phase: ${g.phase}`;
+    lobbyMetaEl.textContent = `Game ${g.gameId} · Phase: ${g.phase}`;
 
     const seats = g.seats || [];
     lobbySeatsEl.innerHTML = "";
@@ -212,6 +212,9 @@
       return;
     }
 
+    const discard = Array.isArray(state.discardPile) ? state.discardPile : [];
+    const lastCard = discard.length ? discard[discard.length - 1] : null;
+
     const resultText =
       state.result === "active"
         ? "In progress"
@@ -219,7 +222,15 @@
         ? `Won by seat ${state.winnerSeatIndex}`
         : state.result;
 
-    gameMetaEl.textContent = `Game ${g.gameId} b7 Turn ${state.turnNumber} b7 Current seat: ${state.currentSeatIndex} b7 ${resultText}`;
+    const cardPart = lastCard ? ` · Last card: ${lastCard}` : "";
+    gameMetaEl.textContent =
+      `Game ${g.gameId} · Turn ${state.turnNumber} · Current seat: ${state.currentSeatIndex}` +
+      cardPart +
+      ` · ${resultText}`;
+
+    const isActive = state.result === "active";
+    playMoveBtn.disabled = !isActive;
+    botStepBtn.disabled = !isActive;
 
     // Track grid 0-59
     const TRACK_LEN = 60;
@@ -276,6 +287,8 @@
       }
     }
 
+    const currentSeat = state.currentSeatIndex;
+
     // Start areas
     startAreasEl.innerHTML = "";
     Object.keys(colors)
@@ -284,6 +297,9 @@
       .forEach((seatIndex) => {
         const row = document.createElement("div");
         row.className = "start-row";
+        if (seatIndex === currentSeat) {
+          row.classList.add("current-seat");
+        }
         const label = document.createElement("span");
         label.className = "start-row-label";
         label.textContent = `Seat ${seatIndex}`;
@@ -305,6 +321,9 @@
       .forEach((seatIndex) => {
         const row = document.createElement("div");
         row.className = "safety-row";
+        if (seatIndex === currentSeat) {
+          row.classList.add("current-seat");
+        }
         const label = document.createElement("span");
         label.className = "safety-row-label";
         label.textContent = `Seat ${seatIndex}`;
@@ -356,7 +375,7 @@
       games.forEach((g) => {
         const li = document.createElement("li");
         const label = document.createElement("span");
-        label.textContent = `${g.hostName || "Game"} b7 ${g.currentPlayers}/${g.maxSeats}`;
+        label.textContent = `${g.hostName || "Game"} · ${g.currentPlayers}/${g.maxSeats}`;
         const btn = document.createElement("button");
         btn.textContent = "Join";
         btn.addEventListener("click", async () => {

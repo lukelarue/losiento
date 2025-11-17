@@ -93,7 +93,7 @@ Constraints:
   - `deck: string[]` – remaining cards (e.g. ["1", "2", "4", ...]).
   - `discardPile: string[]` – cards already used.
   - `board: BoardState` – all pawn positions.
-  - `lastMove: { ... } | null` – summary for UI (e.g. which pawn moved from A to B, card, bumps, slides).
+  - `lastMove: { ... } | null` – optional move summary for UI (e.g. which pawn moved from A to B, card, bumps, slides). **Note:** this field is not yet implemented in the current backend; the prototype UI instead infers recent moves from `discardPile` and the evolving `board` state.
   - `winnerSeatIndex: number | null`.
   - `result: "active" | "win" | "aborted"`.
 
@@ -388,6 +388,7 @@ All rules in `rules.md` must be covered by automated tests.
   - House rule: sliding on own color works.
   - All pawns on slide path are sent to their Start, including sliding player.
   - Special slide-into-Safety-Zone rule.
+  - Interactions with card `Sorry!` when the landing space is another color's slide start (slide still applies and bumps all pawns along the slide).
 
 - **Safety Zones and Home**
   - Only own pawns can enter Safety Zone.
@@ -594,11 +595,10 @@ This section tracks the current implementation status against the spec.
       - `apply_move(state, move)` applies a chosen move and returns a new `GameState`.
       - `InMemoryPersistence.play_move` / `bot_step` are wired to call this engine API instead of their own movement logic.
     - **Upcoming work – advanced card behaviors & selection (ls-11):**
-      - Refine 11-switch behavior to fully match the spec (e.g., handling slide interactions when the switching pawn lands on a slide start and auditing remaining edge cases).
-      - Expand `Sorry!` targeting to consider all legal target pawns and encode those options as legal moves.
+      - Sorry! targeting and bumping behavior now considers all legal opponent pawns on the track and correctly applies slide rules (including when landing on another color's slide start); remaining card-specific logic is limited to clearly documenting intentional simplifications (e.g., 11-switch does not currently trigger slides when swapping onto a slide start).
       - The backend now supports a richer `clientMovePayload` schema for selecting among legal moves; remaining work is to **document** this schema clearly and integrate it with the frontend move-selection UI.
       - Human `play_move` calls now require a valid move selection payload whenever there is more than one legal move; the only case where the payload can be omitted is when exactly one legal move exists.
-      - Bots already choose a random legal move from `get_legal_moves`; remaining selection work is focused on human move specification and advanced card behaviors.
+      - Bots already choose a random legal move from `get_legal_moves`; remaining selection work is focused on human move specification and complex move choice rather than additional card semantics.
 
 - **In-memory persistence & gameplay**
   - **Status:** Implemented (initial gameplay)
@@ -646,6 +646,7 @@ This section tracks the current implementation status against the spec.
     - The prototype implements:
       - A lobby screen to host or join games via the existing `/api/losiento/host`, `/join`, `/joinable`, `/leave`, and `/start` endpoints.
       - An in-game screen with a **basic visual board**: a 60-cell track grid with colored pawn markers per seat, plus simple Start / Safety / Home summaries per color.
+      - The in-game header displays the current turn, current seat, and the last drawn card (from the discard pile), and the Start/Safety summaries visually highlight the current seat.
       - Simple controls for `Play turn` (which currently sends `payload: { moveIndex: 0 }`), `Bot step`, and `Leave game`.
     - apps/web has not yet been updated to expose a Lo Siento route/page or iframe.
     - The first in-game UI requirement (a basic visual board-and-pawns view, not just JSON) is now satisfied at prototype level; further work is needed for richer UX and explicit move selection when multiple moves exist.

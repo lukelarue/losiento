@@ -10,7 +10,7 @@ from losiento_game.engine import (
     Move,
 )
 from losiento_game.models import GameSettings, Seat, PawnPosition
-from losiento_game.persistence import _select_move
+from losiento_game.persistence import _select_move, InMemoryPersistence
 
 
 class EngineBasicTests(unittest.TestCase):
@@ -278,6 +278,37 @@ class EngineBasicTests(unittest.TestCase):
         self.assertNotIn(safety_pawn.pawn_id, targets)
         self.assertNotIn(home_pawn.pawn_id, targets)
 
+    def test_sorry_on_other_color_slide_triggers_slide_and_bumps(self) -> None:
+        state, _, _ = self._make_basic_state()
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawns1 = [p for p in state.pawns if p.seat_index == 1]
+
+        start_pawn = pawns0[0]
+        target = pawns1[0]
+        extra = pawns1[1]
+
+        slide_indices = first_slide_indices(1)
+        slide_start = slide_indices[0]
+        slide_end = slide_indices[-1]
+
+        target.position = PawnPosition(kind="track", index=slide_start)
+        extra.position = PawnPosition(kind="track", index=slide_indices[1])
+
+        moves = get_legal_moves(state, seat_index=0, card="Sorry!")
+        sorry_moves = [m for m in moves if m.target_pawn_id == target.pawn_id]
+        self.assertTrue(sorry_moves, "expected at least one Sorry! move targeting pawn on other color's slide start")
+
+        new_state = apply_move(state, sorry_moves[0])
+        start_new = next(p for p in new_state.pawns if p.pawn_id == start_pawn.pawn_id)
+        target_new = next(p for p in new_state.pawns if p.pawn_id == target.pawn_id)
+        extra_new = next(p for p in new_state.pawns if p.pawn_id == extra.pawn_id)
+
+        self.assertEqual(start_new.position.kind, "track")
+        self.assertEqual(start_new.position.index, slide_end)
+        self.assertEqual(target_new.position.kind, "start")
+        self.assertEqual(extra_new.position.kind, "start")
+
     def test_sorry_basic_bump_from_start(self) -> None:
         state, _, _ = self._make_basic_state()
 
@@ -369,6 +400,95 @@ class MoveSelectionTests(unittest.TestCase):
         moves = self._make_moves()
         with self.assertRaises(ValueError):
             _ = _select_move(moves, {"move": {"pawnId": "missing"}})
+
+
+class PersistenceInMemoryTests(unittest.TestCase):
+    def _make_started_game(self) -> tuple[InMemoryPersistence, str]:
+        persistence = InMemoryPersistence()
+        doc = persistence.host_game("u0", 2, "host")
+        game_id = doc["game_id"]
+        game = persistence.games[game_id]
+        seats = game["seats"]
+        # Make second seat a bot so start_game can succeed with 2 active seats.
+        if len(seats) > 1:
+            seats[1].is_bot = True
+            seats[1].status = "bot"
+        persistence.start_game(game_id, "u0")
+        return persistence, game_id
+
+    def test_card2_play_move_draws_two_cards_and_keeps_turn(self) -> None:
+        persistence, game_id = self._make_started_game()
+        game = persistence.games[game_id]
+        state = game["state"]
+        # Force a deterministic deck for the test: first card is 2, second is 3.
+        state.deck = ["2", "3", "3"]
+        state.discard_pile = []
+
+        turn_before = state.turn_number
+        current_before = state.current_seat_index
+        deck_len_before = len(state.deck)
+
+        persistence.play_move(game_id, "u0", {"moveIndex": 0})
+
+        state_after = persistence.games[game_id]["state"]
+        self.assertEqual(len(state_after.discard_pile), 2)
+        self.assertEqual(deck_len_before - len(state_after.deck), 2)
+        self.assertEqual(state_after.turn_number, turn_before)
+        self.assertEqual(state_after.current_seat_index, current_before)
+
+    def test_win_condition_sets_result_and_blocks_further_moves(self) -> None:
+        persistence, game_id = self._make_started_game()
+        game = persistence.games[game_id]
+        state = game["state"]
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        # Place three pawns directly into Home.
+        for p in pawns0[:3]:
+            p.position = PawnPosition(kind="home", index=None)
+        # Fourth pawn sits in Safety at index 3 so a card 2 will finish it.
+        last = pawns0[3]
+        last.position = PawnPosition(kind="safety", index=3)
+
+        # Force a deterministic deck: first card is 2.
+        state.deck = ["2"]
+        state.discard_pile = []
+        state.current_seat_index = 0
+        state.result = "active"
+        state.turn_number = 0
+
+        persistence.play_move(game_id, "u0", {"moveIndex": 0})
+
+        state_after = persistence.games[game_id]["state"]
+        self.assertEqual(state_after.result, "win")
+        self.assertEqual(state_after.winner_seat_index, 0)
+        self.assertEqual(persistence.games[game_id]["phase"], "finished")
+
+        # Further moves should be rejected with game_over.
+        with self.assertRaises(ValueError) as ctx:
+            persistence.play_move(game_id, "u0", {"moveIndex": 0})
+        self.assertEqual(str(ctx.exception), "game_over")
+
+    def test_card2_bot_step_draws_two_cards_and_keeps_turn(self) -> None:
+        persistence, game_id = self._make_started_game()
+        game = persistence.games[game_id]
+        state = game["state"]
+        # Ensure it is the bot seat's turn.
+        state.current_seat_index = 1
+        # Deterministic deck: first card is 2, second is 3.
+        state.deck = ["2", "3", "3"]
+        state.discard_pile = []
+
+        turn_before = state.turn_number
+        current_before = state.current_seat_index
+        deck_len_before = len(state.deck)
+
+        persistence.bot_step(game_id)
+
+        state_after = persistence.games[game_id]["state"]
+        self.assertEqual(len(state_after.discard_pile), 2)
+        self.assertEqual(deck_len_before - len(state_after.deck), 2)
+        self.assertEqual(state_after.turn_number, turn_before)
+        self.assertEqual(state_after.current_seat_index, current_before)
 
 
 if __name__ == "__main__":
