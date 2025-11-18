@@ -109,16 +109,16 @@ On a player’s turn:
   - A stretch of normal track leading into the **next color’s first slide**.
 
 - For each color, starting from the space **directly outside that color’s Start** and moving forward along the track:
-  1. You move along your **first slide**, which consists of **3 slide spaces** of your color on the outer track.
+  1. You move along your **first slide**, which consists of **4 slide spaces** of your color on the outer track.
   2. From the **end of your first slide**, there are **5 normal track spaces** until you reach the **start of your second slide**.
-  3. Your **second slide** is **4 slide spaces** long.
-  4. From the end of your second slide, there are **3 normal track spaces** until you reach the **start of the next color’s first slide**, which is again a **3‑space slide**. This pattern repeats for all four colors.
+  3. Your **second slide** is **5 slide spaces** long.
+  4. From the end of your second slide, there is **1 normal track space** until you reach the **start of the next color’s first slide**, which is again a **4‑space slide**. This pattern repeats for all four colors.
 
 - **Corners:** Visually, the **corner** of each side of the board is the space immediately **before** a color’s first slide.
 
 - **Safe Zone entry:**
   - For each color, starting from that color’s first slide **start** and counting forward along the track:
-    - The **entry to that color’s Safety Zone** is located **two spaces after** the beginning of the first slide.
+    - The **entry to that color’s Safety Zone** is located at the **last square of that color’s first slide**.
   - From that entry point, a pawn of that color can move **off the main track** into its Safety Zone on a forward move.
   - The Safety Zone contains **5 spaces** before reaching Home (as described in section 5.5), and those spaces are only accessible to pawns of the matching color.
 

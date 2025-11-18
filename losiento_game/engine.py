@@ -28,11 +28,11 @@ COLORS = ["red", "blue", "yellow", "green"]
 
 # Board geometry (see rules.md §5.7)
 NUM_COLORS = 4
-TRACK_SEGMENT_LEN = 15  # per color: first slide (3) + 5 + second slide (4) + 3
+TRACK_SEGMENT_LEN = 15  # per color: first slide (4) + 5 normal -> second slide (5) + 1
 TRACK_LEN = NUM_COLORS * TRACK_SEGMENT_LEN  # 60
 SAFE_ZONE_LEN = 5
-FIRST_SLIDE_LEN = 3
-SECOND_SLIDE_LEN = 4
+FIRST_SLIDE_LEN = 4
+SECOND_SLIDE_LEN = 5
 
 
 def segment_offset(seat_index: int) -> int:
@@ -51,16 +51,16 @@ def first_slide_indices(seat_index: int) -> List[int]:
 
 def second_slide_indices(seat_index: int) -> List[int]:
     off = segment_offset(seat_index)
-    # From rules: 3 (first slide) + 5 normal -> second slide start at offset+8
-    start = (off + 3 + 5) % TRACK_LEN
+    # From rules: 4 (first slide) + 5 normal -> second slide start at offset+9
+    start = (off + FIRST_SLIDE_LEN + 5) % TRACK_LEN
     return [(start + i) % TRACK_LEN for i in range(SECOND_SLIDE_LEN)]
 
 
 def safe_entry_index(seat_index: int) -> int:
     """Track index where this seat's Safety Zone is entered.
 
-    From rules: entry is two spaces after the beginning of the first slide,
-    so it coincides with the last square of the first slide.
+    From rules: entry coincides with the last square of that color's first slide
+    on the outer track.
     """
 
     return first_slide_indices(seat_index)[-1]

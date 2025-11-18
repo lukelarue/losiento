@@ -170,6 +170,27 @@
     return map;
   }
 
+  function trackIndexForCoord(row, col) {
+    const max = 15;
+    if (row === 0 && col >= 0 && col <= max) {
+      // Top edge, left to right (16 cells)
+      return col;
+    }
+    if (col === max && row >= 1 && row <= max - 1) {
+      // Right edge, top to bottom (excluding corners)
+      return 16 + (row - 1);
+    }
+    if (row === max && col >= 0 && col <= max) {
+      // Bottom edge, right to left (16 cells)
+      return 30 + (max - col);
+    }
+    if (col === 0 && row >= 1 && row <= max - 1) {
+      // Left edge, bottom to top (excluding corners)
+      return 46 + (max - 1 - row);
+    }
+    return null;
+  }
+
   function renderLobby() {
     const g = currentGame;
     lobbyMetaEl.textContent = `Game ${g.gameId} · Phase: ${g.phase}`;
@@ -272,25 +293,57 @@
         ? `Won by seat ${state.winnerSeatIndex}`
         : state.result;
 
-    const cardPart = lastCard ? ` · Last card: ${lastCard}` : "";
     const isActive = state.result === "active";
-    const instruction = isActive ? " · Click a highlighted pawn, then Play Move." : "";
-    gameMetaEl.textContent =
-      `Game ${g.gameId} · Turn ${state.turnNumber} · Current seat: ${state.currentSeatIndex}` +
-      cardPart +
-      ` · ${resultText}` +
-      instruction;
+    const genericHint = isActive ? "Click a highlighted pawn, then Play Move." : "";
+    const cardName = lastCard || "No card";
+    const cardDescription = lastCard
+      ? getCardDescription(lastCard) || "Card effect available."
+      : "No card drawn yet.";
 
     const hasLegalMoves = isActive && legalMoverPawnIds && legalMoverPawnIds.size > 0;
     const hasSelectedLegalPawn =
       hasLegalMoves && selectedPawnId != null && legalMoverPawnIds.has(selectedPawnId);
+
+    gameMetaEl.innerHTML = `
+      <div class="game-meta-grid">
+        <div class="game-info-card">
+          <div class="game-info-title">Game info</div>
+          <div class="game-info-rows">
+            <div class="game-info-row">
+              <span class="game-info-label">Game</span>
+              <span class="game-info-value">#${g.gameId}</span>
+            </div>
+            <div class="game-info-row">
+              <span class="game-info-label">Turn</span>
+              <span class="game-info-value">${state.turnNumber}</span>
+            </div>
+            <div class="game-info-row">
+              <span class="game-info-label">Current seat</span>
+              <span class="game-info-value">Seat ${state.currentSeatIndex}</span>
+            </div>
+            <div class="game-info-row">
+              <span class="game-info-label">Status</span>
+              <span class="game-info-value game-status-pill game-status-${state.result}">${resultText}</span>
+            </div>
+          </div>
+          ${genericHint ? `<div class="game-info-hint">${genericHint}</div>` : ""}
+        </div>
+        <div class="game-card-panel">
+          <div class="game-card-surface">
+            <div class="game-card-label">Last card</div>
+            <div class="game-card-name">${cardName}</div>
+            <div class="game-card-desc">${cardDescription}</div>
+          </div>
+        </div>
+      </div>
+    `;
+
     playMoveBtn.disabled = !isActive || (hasLegalMoves && !hasSelectedLegalPawn);
     botStepBtn.disabled = !isActive;
 
-    // Track grid 0-59
+    // Track grid 0-59 laid out on a 16x16 outer ring
     const TRACK_LEN = 60;
-    const COLS = 15;
-    const ROWS = TRACK_LEN / COLS;
+    const BOARD_SIZE = 16;
 
     const pawns = (state.board && state.board.pawns) || [];
 
@@ -319,34 +372,38 @@
     });
 
     trackGridEl.innerHTML = "";
-    for (let row = 0; row < ROWS; row++) {
-      for (let col = 0; col < COLS; col++) {
-        const idx = row * COLS + col;
+    for (let row = 0; row < BOARD_SIZE; row++) {
+      for (let col = 0; col < BOARD_SIZE; col++) {
         const cell = document.createElement("div");
         cell.className = "track-cell";
-        const indexLabel = document.createElement("span");
-        indexLabel.className = "track-cell-index";
-        indexLabel.textContent = String(idx);
-        cell.appendChild(indexLabel);
 
-        const occupants = trackMap.get(idx) || [];
-        if (occupants.length > 0) {
-          const occ = occupants[0];
-          const dot = document.createElement("div");
-          dot.className = `pawn-dot ${occ.color}`;
-          const isLegalMover = legalMoverPawnIds && legalMoverPawnIds.has(occ.pawnId);
-          if (isLegalMover) {
-            dot.classList.add("legal-mover");
-            dot.addEventListener("click", () => {
-              selectedPawnId = occ.pawnId;
-              renderGame();
-            });
+        const idx = trackIndexForCoord(row, col);
+
+        if (idx !== null && idx !== undefined) {
+          const indexLabel = document.createElement("span");
+          indexLabel.className = "track-cell-index";
+          indexLabel.textContent = String(idx);
+          cell.appendChild(indexLabel);
+
+          const occupants = trackMap.get(idx) || [];
+          if (occupants.length > 0) {
+            const occ = occupants[0];
+            const dot = document.createElement("div");
+            dot.className = `pawn-dot ${occ.color}`;
+            const isLegalMover = legalMoverPawnIds && legalMoverPawnIds.has(occ.pawnId);
+            if (isLegalMover) {
+              dot.classList.add("legal-mover");
+              dot.addEventListener("click", () => {
+                selectedPawnId = occ.pawnId;
+                renderGame();
+              });
+            }
+            if (selectedPawnId && occ.pawnId === selectedPawnId) {
+              dot.classList.add("pawn-selected");
+            }
+            dot.textContent = String(occ.seatIndex);
+            cell.appendChild(dot);
           }
-          if (selectedPawnId && occ.pawnId === selectedPawnId) {
-            dot.classList.add("pawn-selected");
-          }
-          dot.textContent = String(occ.seatIndex);
-          cell.appendChild(dot);
         }
 
         trackGridEl.appendChild(cell);
