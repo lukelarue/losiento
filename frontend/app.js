@@ -228,13 +228,18 @@
         : state.result;
 
     const cardPart = lastCard ? ` · Last card: ${lastCard}` : "";
+    const isActive = state.result === "active";
+    const instruction = isActive ? " · Click a highlighted pawn, then Play Move." : "";
     gameMetaEl.textContent =
       `Game ${g.gameId} · Turn ${state.turnNumber} · Current seat: ${state.currentSeatIndex}` +
       cardPart +
-      ` · ${resultText}`;
+      ` · ${resultText}` +
+      instruction;
 
-    const isActive = state.result === "active";
-    playMoveBtn.disabled = !isActive;
+    const hasLegalMoves = isActive && legalMoverPawnIds && legalMoverPawnIds.size > 0;
+    const hasSelectedLegalPawn =
+      hasLegalMoves && selectedPawnId != null && legalMoverPawnIds.has(selectedPawnId);
+    playMoveBtn.disabled = !isActive || (hasLegalMoves && !hasSelectedLegalPawn);
     botStepBtn.disabled = !isActive;
 
     // Track grid 0-59
@@ -448,11 +453,13 @@
 
   async function handlePlayMove() {
     if (!currentGame) return;
+    const hasLegalMoves = legalMoverPawnIds && legalMoverPawnIds.size > 0;
+    if (hasLegalMoves && selectedPawnId == null) {
+      showToast("Select a highlighted pawn before playing your move.");
+      return;
+    }
     try {
-      const payload =
-        selectedPawnId != null
-          ? { move: { pawnId: selectedPawnId } }
-          : { moveIndex: 0 };
+      const payload = hasLegalMoves ? { move: { pawnId: selectedPawnId } } : {};
       const data = await api("/play", {
         method: "POST",
         body: JSON.stringify({ game_id: currentGame.gameId, payload }),
@@ -518,6 +525,9 @@
       legalMoverPawnIds = new Set(ids);
       if (selectedPawnId && !legalMoverPawnIds.has(selectedPawnId)) {
         selectedPawnId = null;
+      }
+      if (!selectedPawnId && ids.length === 1) {
+        selectedPawnId = ids[0];
       }
       renderGame();
     } catch (err) {

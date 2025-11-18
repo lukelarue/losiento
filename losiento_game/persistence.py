@@ -38,8 +38,6 @@ def _select_move(moves: List[Move], payload: Dict[str, Any]) -> Move:
     if not moves:
         raise ValueError("no_legal_moves")
     if not isinstance(payload, dict) or not payload:
-        if len(moves) == 1:
-            return moves[0]
         raise ValueError("move_selection_required")
 
     idx = payload.get("moveIndex")
@@ -67,9 +65,6 @@ def _select_move(moves: List[Move], payload: Dict[str, Any]) -> Move:
         if not candidates:
             raise ValueError("invalid_move_selection_no_match")
         raise ValueError("invalid_move_selection_ambiguous")
-
-    if len(moves) == 1:
-        return moves[0]
 
     raise ValueError("invalid_move_selection")
 
