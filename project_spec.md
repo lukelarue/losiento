@@ -229,8 +229,8 @@ from the JSON body; the bodies below omit `userId` for that reason.
 - `GET /api/losiento/state`
   - Behavior:
     - Look up caller’s `activeGameId` in `losiento_users/{userId}`.
-    - If none, return 404 (`{"detail": "no game"}`).
-    - Otherwise, return the current game shaped via `to_client` (including `state` inner payload for board and turn info).
+    - If none, return **204 No Content** (no response body) to indicate that the caller currently has no active game.
+    - Otherwise, return **200 OK** with the current game shaped via `to_client` (including `state` inner payload for board and turn info).
 
 - `GET /api/losiento/legal-movers`
   - Query: `?game_id=<id>`.
@@ -448,6 +448,10 @@ allow explicit user choice when multiple legal moves exist.
 
 - Show:
   - A basic **visual board** with pawns for all seats (not just a raw JSON dump of game state).
+    - Slide spaces on the outer track are rendered with a subtle blue background.
+    - The **start** of each slide is marked with an `X`, the **end** with an open `O`, and the spaces in between show arrow glyphs (`→`, `↓`, `←`, `↑`) pointing in the slide direction.
+    - The square directly outside each Start (Start exit) and the square where that color enters its Safety Zone (Safe entry) are both visually highlighted, matching the in-game legend.
+    - A small **Legend** panel explains these markings (blue background = slide, X = start, O = end, arrows = slide direction, green ring = Safety entry, yellow ring = Start exit).
   - Indicator of current player turn and drawn card.
   - Whenever the top of the discard pile (last drawn card) changes, display a small popup/overlay in the UI with a short human-readable description of that card.
   - Simple move UI:

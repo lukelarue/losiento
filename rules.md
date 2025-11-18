@@ -86,6 +86,7 @@ On a player’s turn:
 ### 5.5 Safety Zones
 
 - The last few squares before each player’s Home are that player’s **Safety Zone**, specially colored to match their Home.
+- For each color, the Safety Zone is a short **inward lane** off the main track made up of **5 Safety Zone spaces** that lead into that color’s single Home space.
 - Only pawns of that color may enter that Safety Zone.
 - While in a Safety Zone, pawns are **safe**:
   - They cannot be bumped by opponents.
@@ -98,6 +99,10 @@ On a player’s turn:
 - A pawn may only move into its Home space by **exact count**.
 - Only a move that lands a pawn exactly on Home is allowed to place that pawn into Home.
 - Once a pawn reaches Home, it stays there for the rest of the game.
+- Pawns already in Home are **fully safe**:
+  - They cannot be bumped or displaced.
+  - They cannot be switched using an 11 card.
+  - They cannot be targeted by a `Sorry!` card.
 
 ### 5.7 Board Layout and Geometry
 
@@ -120,7 +125,41 @@ On a player’s turn:
   - For each color, starting from that color’s first slide **start** and counting forward along the track:
     - The **entry to that color’s Safety Zone** is located at the **last square of that color’s first slide**.
   - From that entry point, a pawn of that color can move **off the main track** into its Safety Zone on a forward move.
-  - The Safety Zone contains **5 spaces** before reaching Home (as described in section 5.5), and those spaces are only accessible to pawns of the matching color.
+  - The Safety Zone contains **5 spaces** before reaching Home (as described in section 5.5), and those spaces are only accessible to pawns of the matching color, followed by that color’s single Home space.
+
+### 5.8 ASCII board diagram (reference)
+
+The following ASCII diagram shows one concrete layout of the outer track, slides, Start spaces (`S`), and the location of each color’s Home (`H`):
+
+```text
+# > - - o # # # # > - - - o # #
+#   #   S                     v
+o   #             H # # # # # |
+|   #                         |
+|   #                       S o
+|   #                         #
+^   H                         #
+#                             #
+#                             #
+#                         H   v
+#                         #   |
+o S                       #   |
+|                         #   |
+| # # # # # H             #   o
+^                     S   #   #
+# # o - - - < # # # # o - - < #
+```
+
+Notice a few features:
+
+- The `#` characters are empty squares.
+- The `S` characters are Start spaces.
+- The `H` characters mark each color’s Home.
+- For readability, the **5 Safety Zone spaces** that lead into each `H` are not drawn individually; they run straight inward from the main track toward the `H` for that color.
+- The `>`, `v`, `<`, and `^` characters mark the start of slides in each direction.
+- The `|` and `-` characters are the middle of slides (vertical and horizontal).
+- The `o` characters are the end of slides.
+- Each column in the diagram is separated by a column of spaces to make it appear more square-like.
 
 ## 6. Card Reference
 

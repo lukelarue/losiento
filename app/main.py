@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -210,7 +210,7 @@ def create_app(persistence=None) -> FastAPI:
     def get_state(user_id: str = Depends(get_user_id)):
         doc = app.state.persistence.get_active_game_for_user(user_id)
         if not doc:
-            raise HTTPException(status_code=404, detail="no game")
+            return Response(status_code=204)
         return app.state.persistence.to_client(doc, user_id)
 
     @app.get(f"{API_BASE}/legal-movers")

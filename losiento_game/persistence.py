@@ -18,6 +18,7 @@ from .engine import (
     SAFE_ZONE_LEN,
     SLIDES,
     safe_entry_index,
+    first_slide_indices,
     shuffle_deck,
     build_deck,
     get_legal_moves,
@@ -360,10 +361,10 @@ class InMemoryPersistence:
         if pos.kind == "home":
             return False
         if pos.kind == "start":
-            # Leaving Start: first step goes to the start of this color's first slide
-            start_idx = safe_entry_index(pawn.seat_index) - (SAFE_ZONE_LEN - 1)
-            # safe_entry_index is the last square of first slide (index 2), so start of slide is entry-2
-            start_idx %= TRACK_LEN
+            # Leaving Start: first step goes to the track square immediately before
+            # the start of this color's first slide.
+            fs = first_slide_indices(pawn.seat_index)
+            start_idx = (fs[0] - 1) % TRACK_LEN
             if steps < 1:
                 return False
             track_index = start_idx

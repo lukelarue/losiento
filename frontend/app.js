@@ -23,8 +23,8 @@
   const trackGridEl = document.getElementById("track-grid");
   const startAreasEl = document.getElementById("start-areas");
   const safetyHomeEl = document.getElementById("safety-home");
-  const playMoveBtn = document.getElementById("play-move");
-  const botStepBtn = document.getElementById("bot-step-btn");
+  const cardHistoryEl = document.getElementById("card-history");
+  const turnActionBtn = document.getElementById("turn-action");
   const leaveGameBtn = document.getElementById("leave-game");
 
   const toastEl = document.getElementById("toast");
@@ -35,6 +35,11 @@
   let legalMoverPawnIds = new Set();
   let lastShownCard = null;
   let lastShownGameId = null;
+  let cardHistory = [];
+  let cardHistoryGameId = null;
+  let lastHistoryDiscardLength = 0;
+  let historyInitialized = false;
+  let lastHistorySeatIndex = null;
 
   function showToast(message, millis = 2500) {
     toastEl.textContent = message;
@@ -141,6 +146,11 @@
       stopPolling();
       legalMoverPawnIds = new Set();
       selectedPawnId = null;
+      cardHistory = [];
+      cardHistoryGameId = null;
+      lastHistoryDiscardLength = 0;
+      historyInitialized = false;
+      lastHistorySeatIndex = null;
       setScreen("noGame");
       return;
     }
@@ -286,6 +296,45 @@
       lastShownCard = lastCard;
     }
 
+    if (g.gameId !== cardHistoryGameId) {
+      cardHistoryGameId = g.gameId;
+      cardHistory = [];
+      lastHistoryDiscardLength = 0;
+      historyInitialized = false;
+      lastHistorySeatIndex = null;
+    }
+
+    if (!historyInitialized) {
+      if (discard.length > 0) {
+        discard.forEach((card) => {
+          cardHistory.push({ card, seatIndex: null });
+        });
+      }
+      lastHistoryDiscardLength = discard.length;
+      lastHistorySeatIndex = state.currentSeatIndex;
+      historyInitialized = true;
+    } else {
+      if (discard.length < lastHistoryDiscardLength) {
+        cardHistory = [];
+        lastHistoryDiscardLength = discard.length;
+        lastHistorySeatIndex = state.currentSeatIndex;
+      } else if (discard.length > lastHistoryDiscardLength) {
+        const prevSeatIndex =
+          lastHistorySeatIndex != null ? lastHistorySeatIndex : state.currentSeatIndex;
+        const newCards = discard.slice(lastHistoryDiscardLength);
+        newCards.forEach((card) => {
+          cardHistory.push({ card, seatIndex: prevSeatIndex });
+          if (cardHistory.length > 50) {
+            cardHistory = cardHistory.slice(cardHistory.length - 50);
+          }
+        });
+        lastHistoryDiscardLength = discard.length;
+        lastHistorySeatIndex = state.currentSeatIndex;
+      } else {
+        lastHistorySeatIndex = state.currentSeatIndex;
+      }
+    }
+
     const resultText =
       state.result === "active"
         ? "In progress"
@@ -338,12 +387,86 @@
       </div>
     `;
 
-    playMoveBtn.disabled = !isActive || (hasLegalMoves && !hasSelectedLegalPawn);
-    botStepBtn.disabled = !isActive;
+    const seats = g.seats || [];
+    const currentSeatSeat = seats[state.currentSeatIndex];
+    const isBotTurn = !!(currentSeatSeat && currentSeatSeat.isBot);
+
+    if (turnActionBtn) {
+      let label = "";
+      turnActionBtn.classList.remove("turn-btn-human", "turn-btn-bot");
+      if (!isActive) {
+        label = "No turn";
+        turnActionBtn.disabled = true;
+      } else if (isBotTurn) {
+        label = "Bot turn";
+        turnActionBtn.disabled = false;
+        turnActionBtn.classList.add("turn-btn-bot");
+      } else {
+        label = "Play turn";
+        turnActionBtn.disabled = !isActive || (hasLegalMoves && !hasSelectedLegalPawn);
+        turnActionBtn.classList.add("turn-btn-human");
+      }
+      turnActionBtn.textContent = label;
+    }
+
+    const statusPillsEl = document.getElementById("game-status-pills");
+    if (statusPillsEl) {
+      statusPillsEl.innerHTML = "";
+      Object.keys(colors)
+        .map((k) => parseInt(k, 10))
+        .sort((a, b) => a - b)
+        .forEach((seatIndex) => {
+          const pill = document.createElement("div");
+          pill.className = "status-pill";
+
+          if (state.result === "win" && state.winnerSeatIndex === seatIndex) {
+            pill.classList.add("status-pill-winner");
+          } else if (state.result === "active" && state.currentSeatIndex === seatIndex) {
+            pill.classList.add("status-pill-current");
+          }
+
+          const label = document.createElement("span");
+          label.className = "status-pill-label";
+          label.textContent = `Seat ${seatIndex}`;
+
+          const value = document.createElement("span");
+          value.className = "status-pill-value";
+          if (state.result === "win" && state.winnerSeatIndex === seatIndex) {
+            value.textContent = "Winner";
+          } else if (state.result === "active" && state.currentSeatIndex === seatIndex) {
+            value.textContent = "Current turn";
+          } else if (state.result === "active") {
+            value.textContent = "Waiting";
+          } else {
+            value.textContent = "Idle";
+          }
+
+          pill.appendChild(label);
+          pill.appendChild(value);
+          statusPillsEl.appendChild(pill);
+        });
+    }
 
     // Track grid 0-59 laid out on a 16x16 outer ring
     const TRACK_LEN = 60;
     const BOARD_SIZE = 16;
+
+    function coordForTrackIndex(idx) {
+      const max = 15;
+      if (idx >= 0 && idx <= max) {
+        return { row: 0, col: idx };
+      }
+      if (idx >= 16 && idx <= 29) {
+        return { row: 1 + (idx - 16), col: max };
+      }
+      if (idx >= 30 && idx <= 45) {
+        return { row: max, col: max - (idx - 30) };
+      }
+      if (idx >= 46 && idx <= 59) {
+        return { row: max - 1 - (idx - 46), col: 0 };
+      }
+      return { row: 0, col: 0 };
+    }
 
     const pawns = (state.board && state.board.pawns) || [];
 
@@ -352,22 +475,170 @@
     const safetyCount = {};
     const homeCount = {};
 
+    const safetyOccupants = new Map();
+    const homeOccupants = new Map();
+
+    const TRACK_SEGMENT_LEN = 15;
+    const FIRST_SLIDE_LEN = 4;
+    const SECOND_SLIDE_LEN = 5;
+    const SAFE_ZONE_LEN = 5;
+
+    function firstSlideIndicesForSeat(seatIndex) {
+      const offset = (seatIndex % 4) * TRACK_SEGMENT_LEN;
+      const start = (offset + 1) % TRACK_LEN;
+      const indices = [];
+      for (let i = 0; i < FIRST_SLIDE_LEN; i++) {
+        indices.push((start + i) % TRACK_LEN);
+      }
+      return indices;
+    }
+
+    function secondSlideIndicesForSeat(seatIndex) {
+      const firstSlide = firstSlideIndicesForSeat(seatIndex);
+      const lastFirst = firstSlide[firstSlide.length - 1];
+      const start = (lastFirst + 1 + 5) % TRACK_LEN;
+      const indices = [];
+      for (let i = 0; i < SECOND_SLIDE_LEN; i++) {
+        indices.push((start + i) % TRACK_LEN);
+      }
+      return indices;
+    }
+
+    function safetyDirectionForSeat(seatIndex) {
+      const normalized = seatIndex % 4;
+      if (normalized === 0) return { dr: 1, dc: 0 };
+      if (normalized === 1) return { dr: 0, dc: -1 };
+      if (normalized === 2) return { dr: -1, dc: 0 };
+      return { dr: 0, dc: 1 };
+    }
+
+    const slideIndices = new Set();
+    const slideStartIndices = new Set();
+    const safeEntryIndices = new Set();
+    const startExitIndices = new Set();
+    const slideMarkerMap = new Map();
+
+    const slideSeatByIndex = new Map();
+    const safeEntrySeatByIndex = new Map();
+    const startExitSeatByIndex = new Map();
+
+    const slideSegments = [];
+
+    const safetyCoordsBySeat = {};
+    const homeCoordBySeat = {};
+    const safetyGeometry = new Map();
+    const homeGeometry = new Map();
+
+    Object.keys(colors)
+      .map((k) => parseInt(k, 10))
+      .filter((k) => !Number.isNaN(k))
+      .sort((a, b) => a - b)
+      .forEach((seatIndex) => {
+        const firstSlide = firstSlideIndicesForSeat(seatIndex);
+        const secondSlide = secondSlideIndicesForSeat(seatIndex);
+
+        if (firstSlide.length) {
+          firstSlide.forEach((idx) => {
+            slideIndices.add(idx);
+            slideSeatByIndex.set(idx, seatIndex);
+          });
+          slideStartIndices.add(firstSlide[0]);
+          const entryIdx = firstSlide[1];
+          safeEntryIndices.add(entryIdx);
+          safeEntrySeatByIndex.set(entryIdx, seatIndex);
+          const startExitIdx = (firstSlide[0] - 1 + TRACK_LEN) % TRACK_LEN;
+          startExitIndices.add(startExitIdx);
+          startExitSeatByIndex.set(startExitIdx, seatIndex);
+          slideSegments.push(firstSlide);
+
+          const entryCoord = coordForTrackIndex(entryIdx);
+          const dir = safetyDirectionForSeat(seatIndex);
+          const coords = [];
+          for (let i = 0; i < SAFE_ZONE_LEN; i++) {
+            const row = entryCoord.row + dir.dr * (i + 1);
+            const col = entryCoord.col + dir.dc * (i + 1);
+            const key = `${row}:${col}`;
+            coords.push({ row, col });
+            safetyGeometry.set(key, { seatIndex, safetyIndex: i });
+          }
+          safetyCoordsBySeat[seatIndex] = coords;
+
+          const homeRow = entryCoord.row + dir.dr * (SAFE_ZONE_LEN + 1);
+          const homeCol = entryCoord.col + dir.dc * (SAFE_ZONE_LEN + 1);
+          const homeKey = `${homeRow}:${homeCol}`;
+          homeCoordBySeat[seatIndex] = { row: homeRow, col: homeCol };
+          homeGeometry.set(homeKey, { seatIndex });
+        }
+
+        if (secondSlide.length) {
+          secondSlide.forEach((idx) => {
+            slideIndices.add(idx);
+            slideSeatByIndex.set(idx, seatIndex);
+          });
+          slideStartIndices.add(secondSlide[0]);
+          slideSegments.push(secondSlide);
+        }
+      });
+
+    slideSegments.forEach((segment) => {
+      if (!segment || segment.length === 0) return;
+      const firstIdx = segment[0];
+      const secondIdx = segment.length > 1 ? segment[1] : segment[0];
+      const a = coordForTrackIndex(firstIdx);
+      const b = coordForTrackIndex(secondIdx);
+      let arrow = "→";
+      if (a.row === b.row && b.col > a.col) {
+        arrow = "→";
+      } else if (a.row === b.row && b.col < a.col) {
+        arrow = "←";
+      } else if (a.col === b.col && b.row > a.row) {
+        arrow = "↓";
+      } else if (a.col === b.col && b.row < a.row) {
+        arrow = "↑";
+      }
+
+      segment.forEach((idx, i) => {
+        if (i === 0) {
+          slideMarkerMap.set(idx, "X");
+        } else if (i === segment.length - 1) {
+          slideMarkerMap.set(idx, "O");
+        } else {
+          slideMarkerMap.set(idx, arrow);
+        }
+      });
+    });
+
     pawns.forEach((p) => {
       const pos = p.position || {};
       const seatIndex = p.seatIndex;
       const color = colors[seatIndex] || "red";
       if (pos.type === "track") {
         const idx = pos.index ?? 0;
-        const key = idx;
-        if (!trackMap.has(key)) trackMap.set(key, []);
-        trackMap.get(key).push({ seatIndex, color, pawnId: p.pawnId });
+        if (!trackMap.has(idx)) trackMap.set(idx, []);
+        trackMap.get(idx).push({ seatIndex, color, pawnId: p.pawnId });
       } else if (pos.type === "start") {
         startCount[seatIndex] = (startCount[seatIndex] || 0) + 1;
       } else if (pos.type === "safety") {
-        const key = `${seatIndex}:${pos.index ?? 0}`;
-        safetyCount[key] = (safetyCount[key] || 0) + 1;
+        const safetyIndex = pos.index ?? 0;
+        const keyCount = `${seatIndex}:${safetyIndex}`;
+        safetyCount[keyCount] = (safetyCount[keyCount] || 0) + 1;
+
+        const coordsForSeat = safetyCoordsBySeat[seatIndex];
+        if (coordsForSeat && coordsForSeat[safetyIndex]) {
+          const coord = coordsForSeat[safetyIndex];
+          const key = `${coord.row}:${coord.col}`;
+          if (!safetyOccupants.has(key)) safetyOccupants.set(key, []);
+          safetyOccupants.get(key).push({ seatIndex, color, pawnId: p.pawnId });
+        }
       } else if (pos.type === "home") {
         homeCount[seatIndex] = (homeCount[seatIndex] || 0) + 1;
+
+        const homeCoord = homeCoordBySeat[seatIndex];
+        if (homeCoord) {
+          const key = `${homeCoord.row}:${homeCoord.col}`;
+          if (!homeOccupants.has(key)) homeOccupants.set(key, []);
+          homeOccupants.get(key).push({ seatIndex, color, pawnId: p.pawnId });
+        }
       }
     });
 
@@ -378,39 +649,107 @@
         cell.className = "track-cell";
 
         const idx = trackIndexForCoord(row, col);
+        const coordKey = `${row}:${col}`;
+        const safetyGeom = safetyGeometry.get(coordKey);
+        const homeGeom = homeGeometry.get(coordKey);
 
         if (idx !== null && idx !== undefined) {
+          cell.classList.add("track-cell-track");
+          if (slideIndices.has(idx)) {
+            cell.classList.add("track-cell-slide");
+          }
+          if (slideStartIndices.has(idx)) {
+            cell.classList.add("track-cell-slide-start");
+          }
+          if (safeEntryIndices.has(idx)) {
+            cell.classList.add("track-cell-safe-entry");
+          }
+          if (startExitIndices.has(idx)) {
+            cell.classList.add("track-cell-start-exit");
+          }
           const indexLabel = document.createElement("span");
           indexLabel.className = "track-cell-index";
           indexLabel.textContent = String(idx);
           cell.appendChild(indexLabel);
 
-          const occupants = trackMap.get(idx) || [];
-          if (occupants.length > 0) {
-            const occ = occupants[0];
-            const dot = document.createElement("div");
-            dot.className = `pawn-dot ${occ.color}`;
-            const isLegalMover = legalMoverPawnIds && legalMoverPawnIds.has(occ.pawnId);
-            if (isLegalMover) {
-              dot.classList.add("legal-mover");
-              dot.addEventListener("click", () => {
-                selectedPawnId = occ.pawnId;
-                renderGame();
-              });
-            }
-            if (selectedPawnId && occ.pawnId === selectedPawnId) {
-              dot.classList.add("pawn-selected");
-            }
-            dot.textContent = String(occ.seatIndex);
-            cell.appendChild(dot);
+          const markerChar = slideMarkerMap.get(idx);
+          if (markerChar) {
+            const markerEl = document.createElement("span");
+            markerEl.className = "track-cell-slide-marker";
+            markerEl.textContent = markerChar;
+            cell.appendChild(markerEl);
           }
+        }
+
+        if (safetyGeom) {
+          cell.classList.add("track-cell-safety");
+        }
+        if (homeGeom) {
+          cell.classList.add("track-cell-home");
+        }
+
+        let ownerSeatIndex = null;
+        if (homeGeom && typeof homeGeom.seatIndex === "number") {
+          ownerSeatIndex = homeGeom.seatIndex;
+        } else if (safetyGeom && typeof safetyGeom.seatIndex === "number") {
+          ownerSeatIndex = safetyGeom.seatIndex;
+        } else if (idx !== null && idx !== undefined) {
+          const slideSeat = slideSeatByIndex.get(idx);
+          const safeEntrySeat = safeEntrySeatByIndex.get(idx);
+          const startExitSeat = startExitSeatByIndex.get(idx);
+          if (typeof slideSeat === "number") {
+            ownerSeatIndex = slideSeat;
+          } else if (typeof safeEntrySeat === "number") {
+            ownerSeatIndex = safeEntrySeat;
+          } else if (typeof startExitSeat === "number") {
+            ownerSeatIndex = startExitSeat;
+          }
+        }
+
+        if (ownerSeatIndex != null && Object.prototype.hasOwnProperty.call(colors, ownerSeatIndex)) {
+          const seatColor = colors[ownerSeatIndex];
+          if (seatColor) {
+            cell.classList.add(`seat-${seatColor}`);
+          }
+        }
+
+        let occupant = null;
+        if (homeGeom) {
+          const occs = homeOccupants.get(coordKey) || [];
+          if (occs.length > 0) occupant = occs[0];
+        }
+        if (!occupant && safetyGeom) {
+          const occs = safetyOccupants.get(coordKey) || [];
+          if (occs.length > 0) occupant = occs[0];
+        }
+        if (!occupant && idx !== null && idx !== undefined) {
+          const occs = trackMap.get(idx) || [];
+          if (occs.length > 0) occupant = occs[0];
+        }
+
+        if (occupant) {
+          const dot = document.createElement("div");
+          dot.className = `pawn-dot ${occupant.color}`;
+          const isLegalMover = legalMoverPawnIds && legalMoverPawnIds.has(occupant.pawnId);
+          if (isLegalMover) {
+            dot.classList.add("legal-mover");
+            dot.addEventListener("click", () => {
+              selectedPawnId = occupant.pawnId;
+              renderGame();
+            });
+          }
+          if (selectedPawnId && occupant.pawnId === selectedPawnId) {
+            dot.classList.add("pawn-selected");
+          }
+          dot.textContent = String(occupant.seatIndex);
+          cell.appendChild(dot);
         }
 
         trackGridEl.appendChild(cell);
       }
     }
 
-    const currentSeat = state.currentSeatIndex;
+    const currentSeatIndex = state.currentSeatIndex;
 
     // Start areas
     startAreasEl.innerHTML = "";
@@ -420,7 +759,7 @@
       .forEach((seatIndex) => {
         const row = document.createElement("div");
         row.className = "start-row";
-        if (seatIndex === currentSeat) {
+        if (seatIndex === currentSeatIndex) {
           row.classList.add("current-seat");
         }
         const label = document.createElement("span");
@@ -433,6 +772,35 @@
 
         row.appendChild(label);
         row.appendChild(badge);
+
+        const pawnsInStartForSeat = pawns.filter(
+          (p) => p.seatIndex === seatIndex && p.position && p.position.type === "start"
+        );
+        const legalStartPawns =
+          legalMoverPawnIds && pawnsInStartForSeat.length
+            ? pawnsInStartForSeat.filter((p) => legalMoverPawnIds.has(p.pawnId))
+            : [];
+
+        if (seatIndex === currentSeatIndex && legalStartPawns.length > 0) {
+          const startPawnsRow = document.createElement("div");
+          startPawnsRow.className = "start-row-pawns";
+          legalStartPawns.forEach((p) => {
+            const dot = document.createElement("div");
+            dot.className = `pawn-dot ${colors[seatIndex]}`;
+            dot.textContent = String(seatIndex);
+            dot.classList.add("legal-mover");
+            dot.addEventListener("click", () => {
+              selectedPawnId = p.pawnId;
+              renderGame();
+            });
+            if (selectedPawnId && p.pawnId === selectedPawnId) {
+              dot.classList.add("pawn-selected");
+            }
+            startPawnsRow.appendChild(dot);
+          });
+          row.appendChild(startPawnsRow);
+        }
+
         startAreasEl.appendChild(row);
       });
 
@@ -444,7 +812,7 @@
       .forEach((seatIndex) => {
         const row = document.createElement("div");
         row.className = "safety-row";
-        if (seatIndex === currentSeat) {
+        if (seatIndex === currentSeatIndex) {
           row.classList.add("current-seat");
         }
         const label = document.createElement("span");
@@ -458,12 +826,76 @@
 
         const badge = document.createElement("span");
         badge.className = `badge ${colors[seatIndex]}`;
-        badge.textContent = `${safetyCountForSeat} / ${home}`;
+        badge.textContent = `Safe: ${safetyCountForSeat} · Home: ${home}`;
 
         row.appendChild(label);
         row.appendChild(badge);
         safetyHomeEl.appendChild(row);
       });
+
+    if (cardHistoryEl) {
+      cardHistoryEl.innerHTML = "";
+      if (!cardHistory || cardHistory.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "card-history-empty";
+        empty.textContent = "No cards drawn yet.";
+        cardHistoryEl.appendChild(empty);
+      } else {
+        const list = document.createElement("div");
+        list.className = "card-history-list";
+        cardHistory.forEach((entry) => {
+          const item = document.createElement("div");
+          item.className = "card-history-item";
+
+          const header = document.createElement("div");
+          header.className = "card-history-header";
+
+          const seatLabel = document.createElement("span");
+          seatLabel.className = "card-history-seat";
+          if (entry && entry.seatIndex != null) {
+            seatLabel.textContent = `Seat ${entry.seatIndex}`;
+          } else {
+            seatLabel.textContent = "Seat ?";
+          }
+
+          const cardLabel = document.createElement("span");
+          cardLabel.className = "card-history-card";
+          cardLabel.textContent = entry && entry.card != null ? String(entry.card) : "";
+
+          header.appendChild(seatLabel);
+          header.appendChild(cardLabel);
+
+          item.appendChild(header);
+
+          const descText = getCardDescription(entry.card);
+          if (descText) {
+            const toggle = document.createElement("button");
+            toggle.type = "button";
+            toggle.className = "card-history-toggle";
+            toggle.textContent = "Details";
+
+            const descEl = document.createElement("div");
+            descEl.className = "card-history-desc hidden";
+            descEl.textContent = descText;
+
+            toggle.addEventListener("click", () => {
+              const isHidden = descEl.classList.contains("hidden");
+              if (isHidden) {
+                descEl.classList.remove("hidden");
+              } else {
+                descEl.classList.add("hidden");
+              }
+            });
+
+            item.appendChild(toggle);
+            item.appendChild(descEl);
+          }
+
+          list.appendChild(item);
+        });
+        cardHistoryEl.appendChild(list);
+      }
+    }
   }
 
   async function handleHostSubmit(e) {
@@ -550,6 +982,21 @@
       showToast("You left the game.");
     } catch (err) {
       showToast(`Leave failed: ${err.message}`);
+    }
+  }
+
+  async function handleTurnAction() {
+    if (!currentGame || !currentGame.state) return;
+    const g = currentGame;
+    const state = g.state;
+    if (state.result !== "active") return;
+    const seats = g.seats || [];
+    const currentSeat = seats[state.currentSeatIndex];
+    const isBotTurn = !!(currentSeat && currentSeat.isBot);
+    if (isBotTurn) {
+      await handleBotStep();
+    } else {
+      await handlePlayMove();
     }
   }
 
@@ -646,8 +1093,9 @@
     leaveLobbyBtn.addEventListener("click", handleLeave);
 
     leaveGameBtn.addEventListener("click", handleLeave);
-    playMoveBtn.addEventListener("click", handlePlayMove);
-    botStepBtn.addEventListener("click", handleBotStep);
+    if (turnActionBtn) {
+      turnActionBtn.addEventListener("click", handleTurnAction);
+    }
 
     setScreen("loading");
     fetchState().then(() => {

@@ -46,13 +46,14 @@ def segment_offset(seat_index: int) -> int:
 
 def first_slide_indices(seat_index: int) -> List[int]:
     off = segment_offset(seat_index)
-    return [(off + i) % TRACK_LEN for i in range(FIRST_SLIDE_LEN)]
+    start = (off + 1) % TRACK_LEN
+    return [(start + i) % TRACK_LEN for i in range(FIRST_SLIDE_LEN)]
 
 
 def second_slide_indices(seat_index: int) -> List[int]:
-    off = segment_offset(seat_index)
-    # From rules: 4 (first slide) + 5 normal -> second slide start at offset+9
-    start = (off + FIRST_SLIDE_LEN + 5) % TRACK_LEN
+    fs = first_slide_indices(seat_index)
+    # From rules: 4 (first slide) + 5 normal -> second slide start after 5 normal spaces
+    start = (fs[-1] + 1 + 5) % TRACK_LEN
     return [(start + i) % TRACK_LEN for i in range(SECOND_SLIDE_LEN)]
 
 
@@ -63,7 +64,8 @@ def safe_entry_index(seat_index: int) -> int:
     on the outer track.
     """
 
-    return first_slide_indices(seat_index)[-1]
+    fs = first_slide_indices(seat_index)
+    return fs[1]
 
 
 def build_slides() -> Dict[int, Dict[str, object]]:
@@ -161,8 +163,8 @@ def _apply_single_forward(state: GameState, pawn: Pawn, steps: int) -> bool:
     if pos.kind == "home":
         return False
     if pos.kind == "start":
-        start_idx = safe_entry_index(pawn.seat_index) - (SAFE_ZONE_LEN - 1)
-        start_idx %= TRACK_LEN
+        fs = first_slide_indices(pawn.seat_index)
+        start_idx = (fs[0] - 1) % TRACK_LEN
         if steps < 1:
             return False
         track_index = start_idx
