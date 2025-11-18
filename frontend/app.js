@@ -33,6 +33,8 @@
   let pollTimer = null;
   let selectedPawnId = null;
   let legalMoverPawnIds = new Set();
+  let lastShownCard = null;
+  let lastShownGameId = null;
 
   function showToast(message, millis = 2500) {
     toastEl.textContent = message;
@@ -41,6 +43,36 @@
     toastEl._timer = setTimeout(() => {
       toastEl.classList.add("hidden");
     }, millis);
+  }
+
+  function getCardDescription(card) {
+    if (!card) return null;
+    switch (card) {
+      case "1":
+        return "Card 1 – move a pawn 1 space or leave Start.";
+      case "2":
+        return "Card 2 – move a pawn 2 spaces and draw again.";
+      case "3":
+        return "Card 3 – move a pawn 3 spaces forward.";
+      case "4":
+        return "Card 4 – move a pawn 4 spaces backward.";
+      case "5":
+        return "Card 5 – move a pawn 5 spaces forward.";
+      case "7":
+        return "Card 7 – move 7 spaces or split between two pawns.";
+      case "8":
+        return "Card 8 – move a pawn 8 spaces forward.";
+      case "10":
+        return "Card 10 – move 10 spaces forward or 1 space backward.";
+      case "11":
+        return "Card 11 – move 11 spaces forward or switch with an opponent pawn.";
+      case "12":
+        return "Card 12 – move a pawn 12 spaces forward.";
+      case "Sorry!":
+        return "Sorry! – move from Start and bump an opponent pawn.";
+      default:
+        return `Card ${card}`;
+    }
   }
 
   function setScreen(name) {
@@ -217,8 +249,21 @@
       return;
     }
 
+    if (g.gameId !== lastShownGameId) {
+      lastShownGameId = g.gameId;
+      lastShownCard = null;
+    }
+
     const discard = Array.isArray(state.discardPile) ? state.discardPile : [];
     const lastCard = discard.length ? discard[discard.length - 1] : null;
+
+    if (lastCard && lastCard !== lastShownCard) {
+      const desc = getCardDescription(lastCard);
+      if (desc) {
+        showToast(desc, 3000);
+      }
+      lastShownCard = lastCard;
+    }
 
     const resultText =
       state.result === "active"

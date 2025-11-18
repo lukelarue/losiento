@@ -449,6 +449,7 @@ allow explicit user choice when multiple legal moves exist.
 - Show:
   - A basic **visual board** with pawns for all seats (not just a raw JSON dump of game state).
   - Indicator of current player turn and drawn card.
+  - Whenever the top of the discard pile (last drawn card) changes, display a small popup/overlay in the UI with a short human-readable description of that card.
   - Simple move UI:
     - Highlight selected pawn and possible destinations.
     - For complex cards (7 split, 11 switch, Sorry!), display simple choices.
