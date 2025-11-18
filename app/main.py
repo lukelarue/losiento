@@ -228,6 +228,8 @@ def create_app(persistence=None) -> FastAPI:
             msg = str(e)
             if msg == "game_not_found":
                 raise HTTPException(status_code=404, detail=msg)
+            if msg in {"game_not_started", "game_over", "not_in_game", "not_your_turn"}:
+                return {"gameId": game_id, "pawnIds": []}
             raise HTTPException(status_code=400, detail=msg)
 
     @app.post(f"{API_BASE}/play")
