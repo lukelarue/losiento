@@ -8,6 +8,7 @@ from losiento_game.engine import (
     first_slide_indices,
     TRACK_LEN,
     Move,
+    safe_entry_index,
 )
 from losiento_game.models import GameSettings, Seat, PawnPosition
 from losiento_game.persistence import _select_move, InMemoryPersistence
@@ -147,6 +148,33 @@ class EngineBasicTests(unittest.TestCase):
         new_state = apply_move(state, moves[0])
         pawn_new = next(p for p in new_state.pawns if p.pawn_id == pawn.pawn_id)
         self.assertEqual(pawn_new.position.kind, "home")
+
+    def test_forward_from_behind_safety_enters_safety_and_respects_overshoot(self) -> None:
+        state, _, _ = self._make_basic_state()
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawn = pawns0[0]
+
+        entry_idx = safe_entry_index(0)
+        behind_idx = (entry_idx - 2) % TRACK_LEN
+        pawn.position = PawnPosition(kind="track", index=behind_idx)
+
+        moves8 = get_legal_moves(state, seat_index=0, card="8")
+        self.assertTrue(moves8, "expected at least one legal move for card 8")
+        moves8_for_pawn = [m for m in moves8 if m.pawn_id == pawn.pawn_id]
+        self.assertTrue(moves8_for_pawn, "expected card 8 to move pawn from behind safety into home")
+
+        state_after_8 = apply_move(state, moves8_for_pawn[0])
+        pawn_after_8 = next(p for p in state_after_8.pawns if p.pawn_id == pawn.pawn_id)
+        self.assertEqual(pawn_after_8.position.kind, "home")
+
+        state2, _, _ = self._make_basic_state()
+        pawns0_b = [p for p in state2.pawns if p.seat_index == 0]
+        pawn2 = pawns0_b[0]
+        pawn2.position = PawnPosition(kind="track", index=behind_idx)
+
+        moves12 = get_legal_moves(state2, seat_index=0, card="12")
+        self.assertFalse(moves12, "card 12 from the same position should overshoot home and be illegal")
 
     def test_slide_on_other_color_still_applies_and_bumps(self) -> None:
         state, _, _ = self._make_basic_state()

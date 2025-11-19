@@ -351,9 +351,6 @@ class InMemoryPersistence:
             track_index = end_idx
 
         # Safety Zone entry by forward move only
-        if forward and track_index == safe_entry_index(pawn.seat_index):
-            return PawnPosition(kind="safety", index=0), slide_indices
-
         return PawnPosition(kind="track", index=track_index), slide_indices
 
     def _bump_pawns_on_indices(self, state: GameState, indices: List[int], moving_pawn: Pawn) -> None:
@@ -379,8 +376,23 @@ class InMemoryPersistence:
                 track_index = self._advance_track(track_index, remaining)
             final_pos, slide_indices = self._apply_slides_and_safety(state, pawn, track_index, forward=True)
         elif pos.kind == "track":
-            track_index = self._advance_track(pos.index or 0, steps)
-            final_pos, slide_indices = self._apply_slides_and_safety(state, pawn, track_index, forward=True)
+            cur = pos.index or 0
+            entry_idx = safe_entry_index(pawn.seat_index)
+            dist_to_entry = (entry_idx - cur) % TRACK_LEN
+            if steps <= dist_to_entry:
+                track_index = self._advance_track(cur, steps)
+                final_pos, slide_indices = self._apply_slides_and_safety(state, pawn, track_index, forward=True)
+            else:
+                steps_into_safety = steps - dist_to_entry
+                remaining_in_safety = steps_into_safety - 1
+                if remaining_in_safety < 0:
+                    return False
+                if remaining_in_safety < SAFE_ZONE_LEN:
+                    final_pos, slide_indices = PawnPosition(kind="safety", index=remaining_in_safety), None
+                elif remaining_in_safety == SAFE_ZONE_LEN:
+                    final_pos, slide_indices = PawnPosition(kind="home", index=None), None
+                else:
+                    return False
         elif pos.kind == "safety":
             new_index = (pos.index or 0) + steps
             if new_index < SAFE_ZONE_LEN:

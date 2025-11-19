@@ -93,6 +93,11 @@ On a player’s turn:
   - They cannot be switched using an 11 card.
   - They cannot be targeted by a `Sorry!` card.
 - If a pawn is forced by a card (such as a 4 or 10) to move **backward out of the Safety Zone**, it is no longer safe and can once again be bumped or switched until it re-enters the Safety Zone.
+- When counting a **forward move** that passes your own Safety Zone entry, you count spaces in this order:
+  1. Outer-track spaces up to and including your Safety Zone entry square on the main track.
+  2. Then Safety Zone space 1, Safety Zone space 2, and so on, in order toward Home.
+
+  A pawn that is **behind its own Safety Zone** on the outer track will therefore enter the Safety Zone as soon as its forward move goes past the entry square, and then continue along the Safety Zone spaces toward Home.
 
 ### 5.6 Entering Home
 
@@ -103,21 +108,16 @@ On a player’s turn:
   - They cannot be bumped or displaced.
   - They cannot be switched using an 11 card.
   - They cannot be targeted by a `Sorry!` card.
+- If a forward move from the outer track, when counted as described in **5.5**, would require the pawn to move **past** its Home (overshooting after traversing the Safety Zone), that move is **illegal** and the pawn does not move.
 
 ### 5.7 Board Layout and Geometry
 
 - The board has a single **outer track loop** shared by all players. This loop is divided into **four identical color segments**, one per player color.
 - Each color segment contains, in order around the track:
-  - That color’s **first slide**.
-  - A stretch of normal track.
-  - That color’s **second slide**.
-  - A stretch of normal track leading into the **next color’s first slide**.
-
-- For each color, starting from the space **directly outside that color’s Start** and moving forward along the track:
-  1. You move along your **first slide**, which consists of **4 slide spaces** of your color on the outer track.
-  2. From the **end of your first slide**, there are **5 normal track spaces** until you reach the **start of your second slide**.
-  3. Your **second slide** is **5 slide spaces** long.
-  4. From the end of your second slide, there is **1 normal track space** until you reach the **start of the next color’s first slide**, which is again a **4‑space slide**. This pattern repeats for all four colors.
+  1. That color’s **first slide**.
+  2. A stretch of normal track.
+  3. That color’s **second slide**.
+  4. A stretch of normal track leading into the **next color’s first slide**.
 
 - **Corners:** Visually, the **corner** of each side of the board is the space immediately **before** a color’s first slide.
 
@@ -126,6 +126,7 @@ On a player’s turn:
     - The **entry to that color’s Safety Zone** is located at the **last square of that color’s first slide**.
   - From that entry point, a pawn of that color can move **off the main track** into its Safety Zone on a forward move.
   - The Safety Zone contains **5 spaces** before reaching Home (as described in section 5.5), and those spaces are only accessible to pawns of the matching color, followed by that color’s single Home space.
+  - Example (Red at the top edge): if a red pawn is two spaces **behind** its own Safety Zone entry on the outer track, then a forward move of 8 spaces will count: 2 outer-track spaces to the entry, 1 step into Safety Zone space 1, then 4 more Safety Zone spaces, and finally 1 step into Home. A larger forward move (such as 12 from the same square) would require stepping past Home and is therefore not a legal move.
 
 ### 5.8 ASCII board diagram (reference)
 

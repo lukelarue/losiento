@@ -281,8 +281,6 @@
     if (!state) {
       gameMetaEl.textContent = "Game has not started yet.";
       trackGridEl.innerHTML = "";
-      startAreasEl.innerHTML = "";
-      safetyHomeEl.innerHTML = "";
       return;
     }
 
@@ -313,7 +311,7 @@
     if (!historyInitialized) {
       if (discard.length > 0) {
         discard.forEach((card) => {
-          cardHistory.push({ card, seatIndex: null });
+          cardHistory.push({ card, seatIndex: null, expanded: false });
         });
       }
       lastHistoryDiscardLength = discard.length;
@@ -329,7 +327,7 @@
           lastHistorySeatIndex != null ? lastHistorySeatIndex : state.currentSeatIndex;
         const newCards = discard.slice(lastHistoryDiscardLength);
         newCards.forEach((card) => {
-          cardHistory.push({ card, seatIndex: prevSeatIndex });
+          cardHistory.push({ card, seatIndex: prevSeatIndex, expanded: false });
           if (cardHistory.length > 50) {
             cardHistory = cardHistory.slice(cardHistory.length - 50);
           }
@@ -366,18 +364,73 @@
     const hasIndexedMoves = isActive && movesArray.length > 0;
     const hasSelectedMove = hasIndexedMoves && selectedMoveIndex != null;
 
+    let selectedMove = null;
+
+    function describePawnForSummary(pawnId) {
+      if (!pawnId) return "";
+      const board = state && state.board ? state.board : null;
+      const pawnsList =
+        board && Array.isArray(board.pawns) ? board.pawns : [];
+      const pawn = pawnsList.find((p) => p.pawnId === pawnId);
+      if (!pawn || !pawn.position) {
+        return String(pawnId);
+      }
+      const seatIndex = pawn.seatIndex;
+      const color = colors[seatIndex] || "red";
+      const pos = pawn.position;
+      if (pos.type === "track") {
+        const tileIndex =
+          typeof pos.index === "number" ? pos.index : 0;
+        return `${color} (tile ${tileIndex})`;
+      }
+      if (pos.type === "start") {
+        return `${color} (start)`;
+      }
+      if (pos.type === "home") {
+        return `${color} (home)`;
+      }
+      if (pos.type === "safety") {
+        const safeIndex =
+          typeof pos.index === "number" ? pos.index + 1 : 1;
+        return `${color} (safe zone ${safeIndex})`;
+      }
+      return color;
+    }
+
     let selectedMoveSummary = "";
     if (hasSelectedMove) {
-      const move = movesArray.find((m) => m.index === selectedMoveIndex) || null;
+      const move =
+        movesArray.find((m) => m.index === selectedMoveIndex) || null;
       if (move) {
-        if (move.secondaryPawnId && move.secondaryDirection && move.secondarySteps != null) {
+        selectedMove = move;
+        if (
+          move.secondaryPawnId &&
+          move.secondaryDirection &&
+          move.secondarySteps != null
+        ) {
           const primarySteps = move.steps != null ? move.steps : 0;
-          const secondarySteps = move.secondarySteps != null ? move.secondarySteps : 0;
-          selectedMoveSummary = `Selected: pawn ${move.pawnId} + pawn ${move.secondaryPawnId} split ${primarySteps}+${secondarySteps}.`;
+          const secondarySteps =
+            move.secondarySteps != null ? move.secondarySteps : 0;
+          const primaryLabel = describePawnForSummary(move.pawnId);
+          const secondaryLabel = describePawnForSummary(
+            move.secondaryPawnId
+          );
+          selectedMoveSummary = `Selected: ${primaryLabel} + ${secondaryLabel} split ${primarySteps}+${secondarySteps}.`;
         } else if (move.targetPawnId) {
-          selectedMoveSummary = `Selected: pawn ${move.pawnId} targeting pawn ${move.targetPawnId}.`;
+          const primaryLabel = describePawnForSummary(move.pawnId);
+          const targetLabel = describePawnForSummary(
+            move.targetPawnId
+          );
+          let verb = "targeting";
+          if (displayCard === "Sorry!") {
+            verb = "Sorry! bumping";
+          } else if (displayCard === "11") {
+            verb = "switching places with";
+          }
+          selectedMoveSummary = `Selected: ${primaryLabel} ${verb} ${targetLabel}.`;
         } else if (move.direction && move.steps != null) {
-          selectedMoveSummary = `Selected: pawn ${move.pawnId} ${move.direction} ${move.steps}.`;
+          const primaryLabel = describePawnForSummary(move.pawnId);
+          selectedMoveSummary = `Selected: ${primaryLabel} ${move.direction} ${move.steps}.`;
         }
       }
     }
@@ -463,8 +516,6 @@
     const pawns = (state.board && state.board.pawns) || [];
 
     const trackMap = new Map();
-    const startCount = {};
-    const safetyCount = {};
     const homeCount = {};
 
     const safetyOccupants = new Map();
@@ -617,12 +668,8 @@
         const idx = pos.index ?? 0;
         if (!trackMap.has(idx)) trackMap.set(idx, []);
         trackMap.get(idx).push({ seatIndex, color, pawnId: p.pawnId });
-      } else if (pos.type === "start") {
-        startCount[seatIndex] = (startCount[seatIndex] || 0) + 1;
       } else if (pos.type === "safety") {
         const safetyIndex = pos.index ?? 0;
-        const keyCount = `${seatIndex}:${safetyIndex}`;
-        safetyCount[keyCount] = (safetyCount[keyCount] || 0) + 1;
 
         const coordsForSeat = safetyCoordsBySeat[seatIndex];
         if (coordsForSeat && coordsForSeat[safetyIndex]) {
@@ -775,17 +822,31 @@
         }
 
         let occupant = null;
+        let occupantCount = 0;
+        let occupantType = null;
         if (homeGeom) {
           const occs = homeOccupants.get(coordKey) || [];
-          if (occs.length > 0) occupant = occs[0];
+          if (occs.length > 0) {
+            occupant = occs[0];
+            occupantCount = occs.length;
+            occupantType = "home";
+          }
         }
         if (!occupant && safetyGeom) {
           const occs = safetyOccupants.get(coordKey) || [];
-          if (occs.length > 0) occupant = occs[0];
+          if (occs.length > 0) {
+            occupant = occs[0];
+            occupantCount = occs.length;
+            occupantType = "safety";
+          }
         }
         if (!occupant && idx !== null && idx !== undefined) {
           const occs = trackMap.get(idx) || [];
-          if (occs.length > 0) occupant = occs[0];
+          if (occs.length > 0) {
+            occupant = occs[0];
+            occupantCount = occs.length;
+            occupantType = "track";
+          }
         }
 
         // If there is no pawn on the track here but this square is the
@@ -800,7 +861,8 @@
               p.position &&
               p.position.type === "start"
           );
-          if (startPawnsForSeat.length > 0) {
+          const totalStartPawns = startPawnsForSeat.length;
+          if (totalStartPawns > 0) {
             let chosen = startPawnsForSeat[0];
             if (legalMoverPawnIds && legalMoverPawnIds.size > 0) {
               const legalStart = startPawnsForSeat.filter((p) =>
@@ -816,6 +878,8 @@
               color,
               pawnId: chosen.pawnId,
             };
+            occupantCount = totalStartPawns;
+            occupantType = "start";
           }
         }
 
@@ -844,114 +908,46 @@
               renderGame();
             });
           }
-          if (selectedPawnId && occupant.pawnId === selectedPawnId) {
+
+          let isPrimarySelected = false;
+          let isTargetSelected = false;
+          let isSecondarySelected = false;
+
+          if (selectedMove) {
+            if (occupant.pawnId === selectedMove.pawnId) {
+              isPrimarySelected = true;
+            }
+            if (selectedMove.targetPawnId && occupant.pawnId === selectedMove.targetPawnId) {
+              isTargetSelected = true;
+            }
+            if (selectedMove.secondaryPawnId && occupant.pawnId === selectedMove.secondaryPawnId) {
+              isSecondarySelected = true;
+            }
+          } else if (selectedPawnId && occupant.pawnId === selectedPawnId) {
+            isPrimarySelected = true;
+          }
+
+          if (isPrimarySelected || isTargetSelected || isSecondarySelected) {
             dot.classList.add("pawn-selected");
           }
-          dot.textContent = String(occupant.seatIndex);
+          if (isTargetSelected) {
+            dot.classList.add("pawn-target");
+          }
+          let label = "";
+          if (occupantType === "start" && occupantCount > 1) {
+            label = String(occupantCount);
+          } else if (occupantType === "home" && occupantCount > 1) {
+            label = String(occupantCount);
+          }
+          if (label) {
+            dot.textContent = label;
+          }
           cell.appendChild(dot);
         }
 
         trackGridEl.appendChild(cell);
       }
     }
-
-    const currentSeatIndex = state.currentSeatIndex;
-
-    // Start areas
-    startAreasEl.innerHTML = "";
-    Object.keys(colors)
-      .map((k) => parseInt(k, 10))
-      .sort((a, b) => a - b)
-      .forEach((seatIndex) => {
-        const row = document.createElement("div");
-        row.className = "start-row";
-        if (seatIndex === currentSeatIndex) {
-          row.classList.add("current-seat");
-        }
-        const label = document.createElement("span");
-        label.className = "start-row-label";
-        label.textContent = `Seat ${seatIndex}`;
-
-        const badge = document.createElement("span");
-        badge.className = `badge ${colors[seatIndex]}`;
-        badge.textContent = String(startCount[seatIndex] || 0);
-
-        row.appendChild(label);
-        row.appendChild(badge);
-
-        const pawnsInStartForSeat = pawns.filter(
-          (p) => p.seatIndex === seatIndex && p.position && p.position.type === "start"
-        );
-        const legalStartPawns =
-          legalMoverPawnIds && pawnsInStartForSeat.length
-            ? pawnsInStartForSeat.filter((p) => legalMoverPawnIds.has(p.pawnId))
-            : [];
-
-        if (seatIndex === currentSeatIndex && legalStartPawns.length > 0) {
-          const startPawnsRow = document.createElement("div");
-          startPawnsRow.className = "start-row-pawns";
-          legalStartPawns.forEach((p) => {
-            const dot = document.createElement("div");
-            dot.className = `pawn-dot ${colors[seatIndex]}`;
-            dot.textContent = String(seatIndex);
-            dot.classList.add("legal-mover");
-            dot.addEventListener("click", () => {
-              const pawnId = p.pawnId;
-              const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
-              const candidates = movesArray.filter((m) => m.pawnId === pawnId);
-              let chosen = null;
-              if (candidates.length > 0) {
-                if (selectedPawnId === pawnId && selectedMoveIndex != null) {
-                  const currentIdx = candidates.findIndex((m) => m.index === selectedMoveIndex);
-                  const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
-                  chosen = candidates[nextIdx];
-                } else {
-                  chosen = candidates[0];
-                }
-              }
-              selectedPawnId = pawnId;
-              selectedMoveIndex = chosen ? chosen.index : null;
-              renderGame();
-            });
-            if (selectedPawnId && p.pawnId === selectedPawnId) {
-              dot.classList.add("pawn-selected");
-            }
-            startPawnsRow.appendChild(dot);
-          });
-          row.appendChild(startPawnsRow);
-        }
-
-        startAreasEl.appendChild(row);
-      });
-
-    // Safety/Home overview
-    safetyHomeEl.innerHTML = "";
-    Object.keys(colors)
-      .map((k) => parseInt(k, 10))
-      .sort((a, b) => a - b)
-      .forEach((seatIndex) => {
-        const row = document.createElement("div");
-        row.className = "safety-row";
-        if (seatIndex === currentSeatIndex) {
-          row.classList.add("current-seat");
-        }
-        const label = document.createElement("span");
-        label.className = "safety-row-label";
-        label.textContent = `Seat ${seatIndex}`;
-
-        const safetyCountForSeat = Object.keys(safetyCount)
-          .filter((k) => k.startsWith(`${seatIndex}:`))
-          .reduce((acc, key) => acc + safetyCount[key], 0);
-        const home = homeCount[seatIndex] || 0;
-
-        const badge = document.createElement("span");
-        badge.className = `badge ${colors[seatIndex]}`;
-        badge.textContent = `Safe: ${safetyCountForSeat} · Home: ${home}`;
-
-        row.appendChild(label);
-        row.appendChild(badge);
-        safetyHomeEl.appendChild(row);
-      });
 
     if (cardHistoryEl) {
       cardHistoryEl.innerHTML = "";
@@ -963,7 +959,11 @@
       } else {
         const list = document.createElement("div");
         list.className = "card-history-list";
-        cardHistory.forEach((entry) => {
+        const historyToRender = Array.isArray(cardHistory)
+          ? cardHistory.slice().reverse()
+          : [];
+
+        historyToRender.forEach((entry) => {
           const item = document.createElement("div");
           item.className = "card-history-item";
 
@@ -972,11 +972,17 @@
 
           const seatLabel = document.createElement("span");
           seatLabel.className = "card-history-seat";
+          let seatText = "Seat ?";
           if (entry && entry.seatIndex != null) {
-            seatLabel.textContent = `Seat ${entry.seatIndex}`;
-          } else {
-            seatLabel.textContent = "Seat ?";
+            seatText = `Seat ${entry.seatIndex}`;
+            if (Object.prototype.hasOwnProperty.call(colors, entry.seatIndex)) {
+              const seatColor = colors[entry.seatIndex];
+              if (seatColor) {
+                item.classList.add(`seat-${seatColor}`);
+              }
+            }
           }
+          seatLabel.textContent = seatText;
 
           const cardLabel = document.createElement("span");
           cardLabel.className = "card-history-card";
@@ -995,15 +1001,20 @@
             toggle.textContent = "Details";
 
             const descEl = document.createElement("div");
-            descEl.className = "card-history-desc hidden";
+            descEl.className = "card-history-desc";
+            if (!entry.expanded) {
+              descEl.classList.add("hidden");
+            }
             descEl.textContent = descText;
 
             toggle.addEventListener("click", () => {
               const isHidden = descEl.classList.contains("hidden");
               if (isHidden) {
                 descEl.classList.remove("hidden");
+                entry.expanded = true;
               } else {
                 descEl.classList.add("hidden");
+                entry.expanded = false;
               }
             });
 

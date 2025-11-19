@@ -313,6 +313,14 @@ button:disabled {
   color: #374151;
 }
 
+.game-card-selected {
+  margin-top: 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #111827;
+  font-weight: 500;
+}
+
 .game-actions {
   display: flex;
   flex-direction: row;
@@ -506,32 +514,45 @@ button:disabled {
   position: absolute;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
-  width: 70%;
+  transform: translate(-50%, -56%);
+  width: 65%;
   height: 70%;
-  border-radius: 9999px;
+  border-radius: 45% 45% 30% 30%;
+  background: var(--pawn-color, #f97373);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.65rem;
-  color: #020617;
-  font-weight: 600;
+  z-index: 3;
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.5);
+}
+
+.pawn-dot::before {
+  content: "";
+  position: absolute;
+  top: -32%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 55%;
+  aspect-ratio: 1 / 1;
+  border-radius: 9999px;
+  background: var(--pawn-color, #f97373);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.45);
 }
 
 .pawn-dot.red {
-  background: #f97373;
+  --pawn-color: #f97373;
 }
 
 .pawn-dot.blue {
-  background: #60a5fa;
+  --pawn-color: #60a5fa;
 }
 
 .pawn-dot.yellow {
-  background: #facc15;
+  --pawn-color: #facc15;
 }
 
 .pawn-dot.green {
-  background: #4ade80;
+  --pawn-color: #4ade80;
 }
 
 .pawn-dot.legal-mover {
@@ -539,8 +560,34 @@ button:disabled {
   cursor: pointer;
 }
 
+.pawn-dot.legal-mover::after,
+.pawn-dot.pawn-selected::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  border: 2px solid rgba(56, 189, 248, 0.85);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.9);
+  pointer-events: none;
+  animation: pawn-glow-ring 1.1s ease-out infinite;
+}
+
 .pawn-dot.pawn-selected {
   box-shadow: 0 0 0 2px #fbbf24, 0 0 0 4px #111827;
+}
+
+.pawn-dot.pawn-selected::after {
+  border-color: rgba(251, 191, 36, 0.98);
+  box-shadow: 0 0 16px rgba(251, 191, 36, 1);
+}
+
+.pawn-dot.pawn-target {
+  box-shadow: 0 0 0 2px #f97373, 0 0 0 4px #111827;
+}
+
+.pawn-dot.pawn-target::after {
+  border-color: rgba(248, 113, 113, 0.98);
+  box-shadow: 0 0 16px rgba(248, 113, 113, 1);
 }
 
 .side-panels {
@@ -633,6 +680,21 @@ button:disabled {
   }
 }
 
+@keyframes pawn-glow-ring {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+}
+
 .status-pill-current {
   border-color: #f59e0b;
   box-shadow: 0 0 0 1px #fbbf24;
@@ -664,7 +726,7 @@ button:disabled {
 }
 
 .start-row-pawns .pawn-dot {
-  position: static;
+  position: relative;
   transform: none;
   width: 1.25rem;
   height: 1.25rem;
@@ -731,6 +793,22 @@ button:disabled {
 
 .card-history-seat {
   color: #9ca3af;
+}
+
+.card-history-item.seat-red {
+  border-left: 3px solid #f97373;
+}
+
+.card-history-item.seat-blue {
+  border-left: 3px solid #60a5fa;
+}
+
+.card-history-item.seat-yellow {
+  border-left: 3px solid #facc15;
+}
+
+.card-history-item.seat-green {
+  border-left: 3px solid #4ade80;
 }
 
 .card-history-card {
