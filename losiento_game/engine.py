@@ -164,7 +164,7 @@ def _apply_single_forward(state: GameState, pawn: Pawn, steps: int) -> bool:
         return False
     if pos.kind == "start":
         fs = first_slide_indices(pawn.seat_index)
-        start_idx = (fs[0] - 1) % TRACK_LEN
+        start_idx = fs[-1]
         if steps < 1:
             return False
         track_index = start_idx

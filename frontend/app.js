@@ -33,6 +33,9 @@
   let pollTimer = null;
   let selectedPawnId = null;
   let legalMoverPawnIds = new Set();
+  let upcomingCard = null;
+  let upcomingMoves = [];
+  let selectedMoveIndex = null;
   let lastShownCard = null;
   let lastShownGameId = null;
   let cardHistory = [];
@@ -146,6 +149,9 @@
       stopPolling();
       legalMoverPawnIds = new Set();
       selectedPawnId = null;
+      upcomingCard = null;
+      upcomingMoves = [];
+      selectedMoveIndex = null;
       cardHistory = [];
       cardHistoryGameId = null;
       lastHistoryDiscardLength = 0;
@@ -343,15 +349,38 @@
         : state.result;
 
     const isActive = state.result === "active";
-    const genericHint = isActive ? "Click a highlighted pawn, then Play Move." : "";
-    const cardName = lastCard || "No card";
-    const cardDescription = lastCard
-      ? getCardDescription(lastCard) || "Card effect available."
+    const isPreviewingCard = isActive && upcomingCard != null;
+    const displayCard = isPreviewingCard ? upcomingCard : lastCard;
+
+    const genericHint = isActive
+      ? isPreviewingCard
+        ? "Card shown above. Click a highlighted pawn to choose a move, then Play turn."
+        : "Waiting for card preview."
+      : "";
+    const cardName = displayCard || "No card";
+    const cardDescription = displayCard
+      ? getCardDescription(displayCard) || "Card effect available."
       : "No card drawn yet.";
 
-    const hasLegalMoves = isActive && legalMoverPawnIds && legalMoverPawnIds.size > 0;
-    const hasSelectedLegalPawn =
-      hasLegalMoves && selectedPawnId != null && legalMoverPawnIds.has(selectedPawnId);
+    const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+    const hasIndexedMoves = isActive && movesArray.length > 0;
+    const hasSelectedMove = hasIndexedMoves && selectedMoveIndex != null;
+
+    let selectedMoveSummary = "";
+    if (hasSelectedMove) {
+      const move = movesArray.find((m) => m.index === selectedMoveIndex) || null;
+      if (move) {
+        if (move.secondaryPawnId && move.secondaryDirection && move.secondarySteps != null) {
+          const primarySteps = move.steps != null ? move.steps : 0;
+          const secondarySteps = move.secondarySteps != null ? move.secondarySteps : 0;
+          selectedMoveSummary = `Selected: pawn ${move.pawnId} + pawn ${move.secondaryPawnId} split ${primarySteps}+${secondarySteps}.`;
+        } else if (move.targetPawnId) {
+          selectedMoveSummary = `Selected: pawn ${move.pawnId} targeting pawn ${move.targetPawnId}.`;
+        } else if (move.direction && move.steps != null) {
+          selectedMoveSummary = `Selected: pawn ${move.pawnId} ${move.direction} ${move.steps}.`;
+        }
+      }
+    }
 
     gameMetaEl.innerHTML = `
       <div class="game-meta-grid">
@@ -382,6 +411,7 @@
             <div class="game-card-label">Last card</div>
             <div class="game-card-name">${cardName}</div>
             <div class="game-card-desc">${cardDescription}</div>
+            ${selectedMoveSummary ? `<div class="game-card-selected">${selectedMoveSummary}</div>` : ""}
           </div>
         </div>
       </div>
@@ -403,48 +433,10 @@
         turnActionBtn.classList.add("turn-btn-bot");
       } else {
         label = "Play turn";
-        turnActionBtn.disabled = !isActive || (hasLegalMoves && !hasSelectedLegalPawn);
+        turnActionBtn.disabled = !isActive || (hasIndexedMoves && !hasSelectedMove);
         turnActionBtn.classList.add("turn-btn-human");
       }
       turnActionBtn.textContent = label;
-    }
-
-    const statusPillsEl = document.getElementById("game-status-pills");
-    if (statusPillsEl) {
-      statusPillsEl.innerHTML = "";
-      Object.keys(colors)
-        .map((k) => parseInt(k, 10))
-        .sort((a, b) => a - b)
-        .forEach((seatIndex) => {
-          const pill = document.createElement("div");
-          pill.className = "status-pill";
-
-          if (state.result === "win" && state.winnerSeatIndex === seatIndex) {
-            pill.classList.add("status-pill-winner");
-          } else if (state.result === "active" && state.currentSeatIndex === seatIndex) {
-            pill.classList.add("status-pill-current");
-          }
-
-          const label = document.createElement("span");
-          label.className = "status-pill-label";
-          label.textContent = `Seat ${seatIndex}`;
-
-          const value = document.createElement("span");
-          value.className = "status-pill-value";
-          if (state.result === "win" && state.winnerSeatIndex === seatIndex) {
-            value.textContent = "Winner";
-          } else if (state.result === "active" && state.currentSeatIndex === seatIndex) {
-            value.textContent = "Current turn";
-          } else if (state.result === "active") {
-            value.textContent = "Waiting";
-          } else {
-            value.textContent = "Idle";
-          }
-
-          pill.appendChild(label);
-          pill.appendChild(value);
-          statusPillsEl.appendChild(pill);
-        });
     }
 
     // Track grid 0-59 laid out on a 16x16 outer ring
@@ -528,6 +520,8 @@
     const homeCoordBySeat = {};
     const safetyGeometry = new Map();
     const homeGeometry = new Map();
+    const startHomeCoordBySeat = {};
+    const startHomeGeometry = new Map();
 
     Object.keys(colors)
       .map((k) => parseInt(k, 10))
@@ -546,7 +540,7 @@
           const entryIdx = firstSlide[1];
           safeEntryIndices.add(entryIdx);
           safeEntrySeatByIndex.set(entryIdx, seatIndex);
-          const startExitIdx = (firstSlide[0] - 1 + TRACK_LEN) % TRACK_LEN;
+          const startExitIdx = firstSlide[firstSlide.length - 1];
           startExitIndices.add(startExitIdx);
           startExitSeatByIndex.set(startExitIdx, seatIndex);
           slideSegments.push(firstSlide);
@@ -562,6 +556,13 @@
             safetyGeometry.set(key, { seatIndex, safetyIndex: i });
           }
           safetyCoordsBySeat[seatIndex] = coords;
+
+          const startExitCoord = coordForTrackIndex(startExitIdx);
+          const startHomeRow = startExitCoord.row + dir.dr;
+          const startHomeCol = startExitCoord.col + dir.dc;
+          const startHomeKey = `${startHomeRow}:${startHomeCol}`;
+          startHomeCoordBySeat[seatIndex] = { row: startHomeRow, col: startHomeCol };
+          startHomeGeometry.set(startHomeKey, { seatIndex });
 
           const homeRow = entryCoord.row + dir.dr * (SAFE_ZONE_LEN + 1);
           const homeCol = entryCoord.col + dir.dc * (SAFE_ZONE_LEN + 1);
@@ -642,6 +643,60 @@
       }
     });
 
+    const statusPillsEl = document.getElementById("game-status-pills");
+    if (statusPillsEl) {
+      statusPillsEl.innerHTML = "";
+      Object.keys(colors)
+        .map((k) => parseInt(k, 10))
+        .sort((a, b) => a - b)
+        .forEach((seatIndex) => {
+          const pill = document.createElement("div");
+          pill.className = "status-pill";
+
+          if (state.result === "win" && state.winnerSeatIndex === seatIndex) {
+            pill.classList.add("status-pill-winner");
+          } else if (state.result === "active" && state.currentSeatIndex === seatIndex) {
+            pill.classList.add("status-pill-current");
+          }
+
+          const label = document.createElement("span");
+          label.className = "status-pill-label";
+          const seat = seats[seatIndex];
+          let suffix = "";
+          if (seat) {
+            if (seat.isBot) {
+              suffix = " (bot)";
+            } else if (seat.displayName) {
+              suffix = ` (${seat.displayName})`;
+            }
+          }
+          label.textContent = `Seat ${seatIndex}${suffix}`;
+          pill.appendChild(label);
+
+          if (state.result === "active" && state.currentSeatIndex === seatIndex) {
+            const turnPill = document.createElement("span");
+            turnPill.className = "your-turn-pill";
+            turnPill.textContent = "Your turn";
+            pill.appendChild(turnPill);
+          }
+
+          const home = homeCount[seatIndex] || 0;
+          const homeSpan = document.createElement("span");
+          homeSpan.className = "status-pill-home";
+          homeSpan.textContent = `${home}/4`;
+          if (home <= 0) {
+            homeSpan.classList.add("home-count-0");
+          } else if (home >= 4) {
+            homeSpan.classList.add("home-count-full");
+          } else {
+            homeSpan.classList.add("home-count-mid");
+          }
+          pill.appendChild(homeSpan);
+
+          statusPillsEl.appendChild(pill);
+        });
+    }
+
     trackGridEl.innerHTML = "";
     for (let row = 0; row < BOARD_SIZE; row++) {
       for (let col = 0; col < BOARD_SIZE; col++) {
@@ -652,6 +707,7 @@
         const coordKey = `${row}:${col}`;
         const safetyGeom = safetyGeometry.get(coordKey);
         const homeGeom = homeGeometry.get(coordKey);
+        const startHomeGeom = startHomeGeometry.get(coordKey);
 
         if (idx !== null && idx !== undefined) {
           cell.classList.add("track-cell-track");
@@ -687,10 +743,15 @@
         if (homeGeom) {
           cell.classList.add("track-cell-home");
         }
+        if (startHomeGeom) {
+          cell.classList.add("track-cell-start-home");
+        }
 
         let ownerSeatIndex = null;
         if (homeGeom && typeof homeGeom.seatIndex === "number") {
           ownerSeatIndex = homeGeom.seatIndex;
+        } else if (startHomeGeom && typeof startHomeGeom.seatIndex === "number") {
+          ownerSeatIndex = startHomeGeom.seatIndex;
         } else if (safetyGeom && typeof safetyGeom.seatIndex === "number") {
           ownerSeatIndex = safetyGeom.seatIndex;
         } else if (idx !== null && idx !== undefined) {
@@ -727,6 +788,37 @@
           if (occs.length > 0) occupant = occs[0];
         }
 
+        // If there is no pawn on the track here but this square is the
+        // "start-home" for a seat, show a virtual pawn representing any
+        // pawns that seat has in Start so the player can click this square to
+        // bring a pawn out.
+        if (!occupant && startHomeGeom && typeof startHomeGeom.seatIndex === "number") {
+          const seatIndexForStart = startHomeGeom.seatIndex;
+          const startPawnsForSeat = pawns.filter(
+            (p) =>
+              p.seatIndex === seatIndexForStart &&
+              p.position &&
+              p.position.type === "start"
+          );
+          if (startPawnsForSeat.length > 0) {
+            let chosen = startPawnsForSeat[0];
+            if (legalMoverPawnIds && legalMoverPawnIds.size > 0) {
+              const legalStart = startPawnsForSeat.filter((p) =>
+                legalMoverPawnIds.has(p.pawnId)
+              );
+              if (legalStart.length > 0) {
+                chosen = legalStart[0];
+              }
+            }
+            const color = colors[seatIndexForStart] || "red";
+            occupant = {
+              seatIndex: seatIndexForStart,
+              color,
+              pawnId: chosen.pawnId,
+            };
+          }
+        }
+
         if (occupant) {
           const dot = document.createElement("div");
           dot.className = `pawn-dot ${occupant.color}`;
@@ -734,7 +826,21 @@
           if (isLegalMover) {
             dot.classList.add("legal-mover");
             dot.addEventListener("click", () => {
-              selectedPawnId = occupant.pawnId;
+              const pawnId = occupant.pawnId;
+              const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+              const candidates = movesArray.filter((m) => m.pawnId === pawnId);
+              let chosen = null;
+              if (candidates.length > 0) {
+                if (selectedPawnId === pawnId && selectedMoveIndex != null) {
+                  const currentIdx = candidates.findIndex((m) => m.index === selectedMoveIndex);
+                  const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
+                  chosen = candidates[nextIdx];
+                } else {
+                  chosen = candidates[0];
+                }
+              }
+              selectedPawnId = pawnId;
+              selectedMoveIndex = chosen ? chosen.index : null;
               renderGame();
             });
           }
@@ -790,7 +896,21 @@
             dot.textContent = String(seatIndex);
             dot.classList.add("legal-mover");
             dot.addEventListener("click", () => {
-              selectedPawnId = p.pawnId;
+              const pawnId = p.pawnId;
+              const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+              const candidates = movesArray.filter((m) => m.pawnId === pawnId);
+              let chosen = null;
+              if (candidates.length > 0) {
+                if (selectedPawnId === pawnId && selectedMoveIndex != null) {
+                  const currentIdx = candidates.findIndex((m) => m.index === selectedMoveIndex);
+                  const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
+                  chosen = candidates[nextIdx];
+                } else {
+                  chosen = candidates[0];
+                }
+              }
+              selectedPawnId = pawnId;
+              selectedMoveIndex = chosen ? chosen.index : null;
               renderGame();
             });
             if (selectedPawnId && p.pawnId === selectedPawnId) {
@@ -900,7 +1020,7 @@
 
   async function handleHostSubmit(e) {
     e.preventDefault();
-    const maxSeats = parseInt(hostMaxSeats.value || "2", 10);
+    const maxSeats = parseInt(hostMaxSeats.value || "4", 10);
     const displayName = hostDisplayName.value || null;
 
     try {
@@ -1002,19 +1122,23 @@
 
   async function handlePlayMove() {
     if (!currentGame) return;
-    const hasLegalMoves = legalMoverPawnIds && legalMoverPawnIds.size > 0;
-    if (hasLegalMoves && selectedPawnId == null) {
-      showToast("Select a highlighted pawn before playing your move.");
+    const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+    const hasMultipleMoves = movesArray.length > 1;
+    if (hasMultipleMoves && selectedMoveIndex == null) {
+      showToast("Select a highlighted pawn/move before playing your turn.");
       return;
     }
     try {
-      const payload = hasLegalMoves ? { move: { pawnId: selectedPawnId } } : {};
+      const payload = selectedMoveIndex != null ? { moveIndex: selectedMoveIndex } : {};
       const data = await api("/play", {
         method: "POST",
         body: JSON.stringify({ game_id: currentGame.gameId, payload }),
       });
       currentGame = data;
       selectedPawnId = null;
+      selectedMoveIndex = null;
+      upcomingCard = null;
+      upcomingMoves = [];
       legalMoverPawnIds = new Set();
       renderFromGame();
     } catch (err) {
@@ -1051,12 +1175,18 @@
       if (!currentGame || !currentGame.state || currentGame.phase !== "active") {
         legalMoverPawnIds = new Set();
         selectedPawnId = null;
+        upcomingCard = null;
+        upcomingMoves = [];
+        selectedMoveIndex = null;
         return;
       }
       const state = currentGame.state;
       if (state.result !== "active") {
         legalMoverPawnIds = new Set();
         selectedPawnId = null;
+        upcomingCard = null;
+        upcomingMoves = [];
+        selectedMoveIndex = null;
         return;
       }
 
@@ -1067,21 +1197,45 @@
       if (!resp.ok) {
         legalMoverPawnIds = new Set();
         selectedPawnId = null;
+        upcomingCard = null;
+        upcomingMoves = [];
+        selectedMoveIndex = null;
         return;
       }
       const data = await resp.json();
       const ids = Array.isArray(data.pawnIds) ? data.pawnIds : [];
       legalMoverPawnIds = new Set(ids);
+
+      upcomingCard = typeof data.card === "string" ? data.card : null;
+      upcomingMoves = Array.isArray(data.moves) ? data.moves : [];
+
       if (selectedPawnId && !legalMoverPawnIds.has(selectedPawnId)) {
         selectedPawnId = null;
       }
-      if (!selectedPawnId && ids.length === 1) {
-        selectedPawnId = ids[0];
+
+      if (selectedMoveIndex != null) {
+        const stillExists =
+          Array.isArray(upcomingMoves) &&
+          upcomingMoves.some((m) => typeof m.index === "number" && m.index === selectedMoveIndex);
+        if (!stillExists) {
+          selectedMoveIndex = null;
+        }
+      }
+
+      if (Array.isArray(upcomingMoves) && upcomingMoves.length === 1) {
+        const onlyMove = upcomingMoves[0];
+        if (onlyMove && typeof onlyMove.index === "number") {
+          selectedMoveIndex = onlyMove.index;
+          selectedPawnId = onlyMove.pawnId || null;
+        }
       }
       renderGame();
     } catch (err) {
       // Advisory only; ignore errors.
       legalMoverPawnIds = new Set();
+      upcomingCard = null;
+      upcomingMoves = [];
+      selectedMoveIndex = null;
     }
   }
 

@@ -38,7 +38,15 @@ def _new_game_id() -> str:
 def _select_move(moves: List[Move], payload: Dict[str, Any]) -> Move:
     if not moves:
         raise ValueError("no_legal_moves")
-    if not isinstance(payload, dict) or not payload:
+    if not isinstance(payload, dict):
+        raise ValueError("invalid_move_selection")
+
+    # When there is exactly one legal move, allow an empty payload and
+    # automatically choose that move. This matches the clientMovePayload
+    # semantics described in the project spec.
+    if not payload:
+        if len(moves) == 1:
+            return moves[0]
         raise ValueError("move_selection_required")
 
     idx = payload.get("moveIndex")
@@ -108,10 +116,10 @@ class InMemoryPersistence:
                     Seat(
                         index=idx,
                         color=color,
-                        is_bot=False,
+                        is_bot=True,
                         player_id=None,
                         display_name=None,
-                        status="open",
+                        status="bot",
                     )
                 )
         doc: Dict[str, Any] = {
@@ -361,10 +369,8 @@ class InMemoryPersistence:
         if pos.kind == "home":
             return False
         if pos.kind == "start":
-            # Leaving Start: first step goes to the track square immediately before
-            # the start of this color's first slide.
             fs = first_slide_indices(pawn.seat_index)
-            start_idx = (fs[0] - 1) % TRACK_LEN
+            start_idx = fs[-1]
             if steps < 1:
                 return False
             track_index = start_idx
@@ -554,7 +560,25 @@ class InMemoryPersistence:
         card = self._draw_card(tmp_state)
         moves = get_legal_moves(tmp_state, seat_index, card)
         pawn_ids = sorted({m.pawn_id for m in moves if m.seat_index == seat_index})
-        return {"gameId": game_id, "pawnIds": pawn_ids}
+
+        moves_payload: List[Dict[str, Any]] = []
+        for idx, m in enumerate(moves):
+            if m.seat_index != seat_index:
+                continue
+            moves_payload.append(
+                {
+                    "index": idx,
+                    "pawnId": m.pawn_id,
+                    "targetPawnId": m.target_pawn_id,
+                    "secondaryPawnId": m.secondary_pawn_id,
+                    "direction": m.direction,
+                    "steps": m.steps,
+                    "secondaryDirection": m.secondary_direction,
+                    "secondarySteps": m.secondary_steps,
+                }
+            )
+
+        return {"gameId": game_id, "card": card, "pawnIds": pawn_ids, "moves": moves_payload}
 
     def play_move(self, game_id: str, user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         game = self._get_game(game_id)
@@ -911,10 +935,10 @@ class FirestorePersistence:
                     {
                         "index": idx,
                         "color": color,
-                        "isBot": False,
+                        "isBot": True,
                         "playerId": None,
                         "displayName": None,
-                        "status": "open",
+                        "status": "bot",
                     }
                 )
 
@@ -1289,7 +1313,25 @@ class FirestorePersistence:
         card = self._draw_card(tmp_state)
         moves = get_legal_moves(tmp_state, seat_index, card)
         pawn_ids = sorted({m.pawn_id for m in moves if m.seat_index == seat_index})
-        return {"gameId": game_id, "pawnIds": pawn_ids}
+
+        moves_payload: List[Dict[str, Any]] = []
+        for idx, m in enumerate(moves):
+            if m.seat_index != seat_index:
+                continue
+            moves_payload.append(
+                {
+                    "index": idx,
+                    "pawnId": m.pawn_id,
+                    "targetPawnId": m.target_pawn_id,
+                    "secondaryPawnId": m.secondary_pawn_id,
+                    "direction": m.direction,
+                    "steps": m.steps,
+                    "secondaryDirection": m.secondary_direction,
+                    "secondarySteps": m.secondary_steps,
+                }
+            )
+
+        return {"gameId": game_id, "card": card, "pawnIds": pawn_ids, "moves": moves_payload}
 
     def play_move(self, game_id: str, user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Apply a human player's move for a Firestore-backed game.

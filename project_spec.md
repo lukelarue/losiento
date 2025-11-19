@@ -238,8 +238,11 @@ from the JSON body; the bodies below omit `userId` for that reason.
     - Ensure the caller is a player in the specified game, the game `phase == "active"`, `state.result == "active"`, and it is the caller’s turn.
     - Reconstruct a `GameState` (in-memory or from Firestore), make a **copy** of it, and simulate drawing the next card on the copy using `_draw_card`.
     - Use the rules engine `get_legal_moves` to compute legal moves for the caller’s seat and that card.
-    - Return `{ gameId, pawnIds }` where `pawnIds` is the set of `pawnId`s that have at least one legal move for the upcoming card.
-    - This endpoint is **advisory** and does not mutate the stored game state; it exists to help the frontend highlight pawns that can move.
+    - Return `{ gameId, card, pawnIds, moves }` where:
+      - `card` is the actual upcoming card that will be drawn for this seat.
+      - `pawnIds` is the set of `pawnId`s that have at least one legal move for that card.
+      - `moves` is an array of legal-move descriptors shaped like the `clientMovePayload.move` fields plus an `index` field, e.g. `{ index, pawnId, targetPawnId, secondaryPawnId, direction, steps, secondaryDirection, secondarySteps }`.
+    - This endpoint is **advisory** and does not mutate the stored game state; it exists to help the frontend highlight pawns that can move and to present concrete move options (including 7-split, 11 switch, and Sorry! targets) before the player commits a `/play`.
 
 - `POST /api/losiento/play`
   - Body: `{ game_id, payload }` where `payload` is the `clientMovePayload`.
