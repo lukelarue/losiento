@@ -54,20 +54,27 @@
         </section>
 
         <section id="screen-game" class="screen hidden">
-          <div class="game-top-bar">
-            <div id="game-meta" class="game-meta"></div>
-            <div class="game-actions">
-              <button id="turn-action">Play turn</button>
-              <button id="leave-game">Leave game</button>
+          <div class="game-layout">
+            <div class="game-left">
+              <div class="game-top-row">
+                <div class="game-top-primary">
+                  <button id="turn-action">Play turn</button>
+                </div>
+                <div class="game-card-panel">
+                  <div id="game-card" class="game-card-surface"></div>
+                </div>
+              </div>
+              <div class="board-panel">
+                <h3>Track</h3>
+                <div id="track-grid" class="track-grid"></div>
+              </div>
             </div>
-          </div>
-
-          <div class="board-layout">
-            <div class="board-panel">
-              <h3>Track</h3>
-              <div id="track-grid" class="track-grid"></div>
-            </div>
-            <div class="side-panels">
+            <div class="game-right">
+              <div class="game-right-top">
+                <button id="autoplay-bot">Autoplay bot turns</button>
+                <button id="leave-game">Leave game</button>
+              </div>
+              <div id="game-meta" class="game-meta"></div>
               <div class="card">
                 <div id="game-status-pills"></div>
               </div>

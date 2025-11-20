@@ -78,6 +78,56 @@ def _select_move(moves: List[Move], payload: Dict[str, Any]) -> Move:
     raise ValueError("invalid_move_selection")
 
 
+def _compute_move_destinations(
+    state: GameState,
+    move: Move,
+) -> tuple[tuple[str, Optional[int]] | None, tuple[str, Optional[int]] | None]:
+    """Simulate a single legal move and return final positions for primary/secondary pawns.
+
+    This helper is used only for advisory UI data in preview_legal_movers and never mutates
+    the caller's GameState. It is safe but potentially a bit expensive; callers should
+    reserve it for small move lists such as per-turn legal moves.
+    """
+
+    tmp_state = copy.deepcopy(state)
+    try:
+        new_state = apply_move(tmp_state, move)
+    except Exception:
+        # If anything goes wrong, fall back to no destination metadata.
+        return (None, None)
+
+    primary = next(
+        (
+            p
+            for p in new_state.pawns
+            if p.pawn_id == move.pawn_id and p.seat_index == move.seat_index
+        ),
+        None,
+    )
+
+    secondary = None
+    if move.secondary_pawn_id is not None:
+        secondary = next(
+            (
+                p
+                for p in new_state.pawns
+                if p.pawn_id == move.secondary_pawn_id
+                and p.seat_index == move.seat_index
+            ),
+            None,
+        )
+
+    primary_dest: tuple[str, Optional[int]] | None = None
+    if primary is not None:
+        primary_dest = (primary.position.kind, primary.position.index)
+
+    secondary_dest: tuple[str, Optional[int]] | None = None
+    if secondary is not None:
+        secondary_dest = (secondary.position.kind, secondary.position.index)
+
+    return (primary_dest, secondary_dest)
+
+
 class InMemoryPersistence:
     def __init__(self) -> None:
         self.games: Dict[str, Dict[str, Any]] = {}
@@ -371,9 +421,6 @@ class InMemoryPersistence:
             if steps < 1:
                 return False
             track_index = start_idx
-            remaining = steps - 1
-            if remaining > 0:
-                track_index = self._advance_track(track_index, remaining)
             final_pos, slide_indices = self._apply_slides_and_safety(state, pawn, track_index, forward=True)
         elif pos.kind == "track":
             cur = pos.index or 0
@@ -577,6 +624,7 @@ class InMemoryPersistence:
         for idx, m in enumerate(moves):
             if m.seat_index != seat_index:
                 continue
+            primary_dest, secondary_dest = _compute_move_destinations(tmp_state, m)
             moves_payload.append(
                 {
                     "index": idx,
@@ -587,6 +635,10 @@ class InMemoryPersistence:
                     "steps": m.steps,
                     "secondaryDirection": m.secondary_direction,
                     "secondarySteps": m.secondary_steps,
+                    "destType": primary_dest[0] if primary_dest is not None else None,
+                    "destIndex": primary_dest[1] if primary_dest is not None else None,
+                    "secondaryDestType": secondary_dest[0] if secondary_dest is not None else None,
+                    "secondaryDestIndex": secondary_dest[1] if secondary_dest is not None else None,
                 }
             )
 
@@ -1330,6 +1382,7 @@ class FirestorePersistence:
         for idx, m in enumerate(moves):
             if m.seat_index != seat_index:
                 continue
+            primary_dest, secondary_dest = _compute_move_destinations(tmp_state, m)
             moves_payload.append(
                 {
                     "index": idx,
@@ -1340,6 +1393,10 @@ class FirestorePersistence:
                     "steps": m.steps,
                     "secondaryDirection": m.secondary_direction,
                     "secondarySteps": m.secondary_steps,
+                    "destType": primary_dest[0] if primary_dest is not None else None,
+                    "destIndex": primary_dest[1] if primary_dest is not None else None,
+                    "secondaryDestType": secondary_dest[0] if secondary_dest is not None else None,
+                    "secondaryDestIndex": secondary_dest[1] if secondary_dest is not None else None,
                 }
             )
 

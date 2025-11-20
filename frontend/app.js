@@ -20,18 +20,21 @@
   const leaveLobbyBtn = document.getElementById("leave-lobby");
 
   const gameMetaEl = document.getElementById("game-meta");
+  const gameCardEl = document.getElementById("game-card");
   const trackGridEl = document.getElementById("track-grid");
   const startAreasEl = document.getElementById("start-areas");
   const safetyHomeEl = document.getElementById("safety-home");
   const cardHistoryEl = document.getElementById("card-history");
   const turnActionBtn = document.getElementById("turn-action");
   const leaveGameBtn = document.getElementById("leave-game");
+  const autoplayBotBtn = document.getElementById("autoplay-bot");
 
   const toastEl = document.getElementById("toast");
 
   let currentGame = null;
   let pollTimer = null;
   let selectedPawnId = null;
+  let selectedSecondaryPawnId = null;
   let legalMoverPawnIds = new Set();
   let upcomingCard = null;
   let upcomingMoves = [];
@@ -43,6 +46,11 @@
   let lastHistoryDiscardLength = 0;
   let historyInitialized = false;
   let lastHistorySeatIndex = null;
+  let pendingHistoryDetails = null;
+  let autoplayBotEnabled = false;
+  let autoplayTimeout = null;
+  let lastPreviewGameId = null;
+  let lastPreviewTurnNumber = null;
 
   function showToast(message, millis = 2500) {
     toastEl.textContent = message;
@@ -57,9 +65,9 @@
     if (!card) return null;
     switch (card) {
       case "1":
-        return "Card 1 – move a pawn 1 space or leave Start.";
+        return "Card 1 – move a pawn 1 space, or leave Start to the space just outside Start (end of your first slide).";
       case "2":
-        return "Card 2 – move a pawn 2 spaces and draw again.";
+        return "Card 2 – move a pawn 2 spaces, or leave Start to the same space just outside Start, then draw again.";
       case "3":
         return "Card 3 – move a pawn 3 spaces forward.";
       case "4":
@@ -67,7 +75,7 @@
       case "5":
         return "Card 5 – move a pawn 5 spaces forward.";
       case "7":
-        return "Card 7 – move 7 spaces or split between two pawns.";
+        return "Card 7 – move 7 spaces with one pawn, or split 7 forward spaces between two of your pawns (you must use all 7 spaces or not move).";
       case "8":
         return "Card 8 – move a pawn 8 spaces forward.";
       case "10":
@@ -77,7 +85,7 @@
       case "12":
         return "Card 12 – move a pawn 12 spaces forward.";
       case "Sorry!":
-        return "Sorry! – move from Start and bump an opponent pawn.";
+        return "¡Lo siento! – move from Start and bump an opponent pawn.";
       default:
         return `Card ${card}`;
     }
@@ -144,11 +152,62 @@
     }
   }
 
+  function stopAutoplay() {
+    autoplayBotEnabled = false;
+    if (autoplayTimeout) {
+      clearTimeout(autoplayTimeout);
+      autoplayTimeout = null;
+    }
+    if (autoplayBotBtn) {
+      autoplayBotBtn.classList.remove("autoplay-on");
+      autoplayBotBtn.textContent = "Autoplay bot turns";
+    }
+  }
+
+  function scheduleAutoplayTick() {
+    if (!autoplayBotEnabled) return;
+    if (autoplayTimeout) return;
+    autoplayTimeout = setTimeout(runAutoplayTick, 750);
+  }
+
+  async function runAutoplayTick() {
+    autoplayTimeout = null;
+    if (!autoplayBotEnabled) return;
+    if (!currentGame || !currentGame.state || currentGame.phase !== "active") {
+      stopAutoplay();
+      return;
+    }
+    const g = currentGame;
+    const state = g.state;
+    if (!state || state.result !== "active") {
+      stopAutoplay();
+      return;
+    }
+    const seats = g.seats || [];
+    const currentSeat = seats[state.currentSeatIndex];
+    const isBotTurn = !!(currentSeat && currentSeat.isBot);
+    if (isBotTurn) {
+      await handleBotStep();
+    }
+    scheduleAutoplayTick();
+  }
+
+  function startAutoplay() {
+    if (!autoplayBotBtn) return;
+    if (autoplayBotEnabled) return;
+    autoplayBotEnabled = true;
+    autoplayBotBtn.classList.add("autoplay-on");
+    autoplayBotBtn.textContent = "Autoplay bot turns (on)";
+    scheduleAutoplayTick();
+  }
+
   function renderFromGame() {
     if (!currentGame) {
       stopPolling();
+      stopAutoplay();
       legalMoverPawnIds = new Set();
       selectedPawnId = null;
+      selectedSecondaryPawnId = null;
       upcomingCard = null;
       upcomingMoves = [];
       selectedMoveIndex = null;
@@ -157,12 +216,15 @@
       lastHistoryDiscardLength = 0;
       historyInitialized = false;
       lastHistorySeatIndex = null;
+      lastPreviewGameId = null;
+      lastPreviewTurnNumber = null;
       setScreen("noGame");
       return;
     }
 
     if (currentGame.phase === "lobby") {
       stopPolling();
+      stopAutoplay();
       renderLobby();
       setScreen("lobby");
     } else if (currentGame.phase === "active") {
@@ -175,6 +237,9 @@
       renderGame();
       setScreen("game");
       stopPolling();
+      stopAutoplay();
+      lastPreviewGameId = null;
+      lastPreviewTurnNumber = null;
     }
   }
 
@@ -184,6 +249,175 @@
       map[s.index] = s.color || ["red", "blue", "yellow", "green"][s.index] || "red";
     });
     return map;
+  }
+
+  function describePawnForSummary(state, colors, pawnId) {
+    if (!pawnId) return "";
+    const board = state && state.board ? state.board : null;
+    const pawnsList = board && Array.isArray(board.pawns) ? board.pawns : [];
+    const pawn = pawnsList.find((p) => p.pawnId === pawnId);
+    if (!pawn || !pawn.position) {
+      return String(pawnId);
+    }
+    const seatIndex = pawn.seatIndex;
+    const color = colors[seatIndex] || "red";
+    const pos = pawn.position;
+    if (pos.type === "track") {
+      const tileIndex = typeof pos.index === "number" ? pos.index : 0;
+      return `${color} (tile ${tileIndex})`;
+    }
+    if (pos.type === "start") {
+      return `${color} (start)`;
+    }
+    if (pos.type === "home") {
+      return `${color} (home)`;
+    }
+    if (pos.type === "safety") {
+      const safeIndex = typeof pos.index === "number" ? pos.index + 1 : 1;
+      return `${color} (safe zone ${safeIndex})`;
+    }
+    return color;
+  }
+
+  function describeDestinationForSummary(move) {
+    if (!move || !move.destType) return "";
+    const destType = move.destType;
+    const hasIndex = typeof move.destIndex === "number";
+    if (destType === "track" && hasIndex) {
+      return `lands on tile ${move.destIndex}`;
+    }
+    if (destType === "safety" && hasIndex) {
+      const safeIndex = move.destIndex + 1;
+      return `ends in safe zone ${safeIndex}`;
+    }
+    if (destType === "home") {
+      return "ends in home";
+    }
+    if (destType === "start") {
+      return "returns to start";
+    }
+    return "";
+  }
+
+  function describeSecondaryDestinationForSummary(move) {
+    if (!move || !move.secondaryDestType) return "";
+    const destType = move.secondaryDestType;
+    const hasIndex = typeof move.secondaryDestIndex === "number";
+    if (destType === "track" && hasIndex) {
+      return `lands on tile ${move.secondaryDestIndex}`;
+    }
+    if (destType === "safety" && hasIndex) {
+      const safeIndex = move.secondaryDestIndex + 1;
+      return `ends in safe zone ${safeIndex}`;
+    }
+    if (destType === "home") {
+      return "ends in home";
+    }
+    if (destType === "start") {
+      return "returns to start";
+    }
+    return "";
+  }
+
+  function buildMoveSummaryBase(cardName, move, state, colors) {
+    if (!move) return "";
+    if (
+      move.secondaryPawnId &&
+      move.secondaryDirection &&
+      move.secondarySteps != null
+    ) {
+      const primaryLabel = describePawnForSummary(state, colors, move.pawnId);
+      const secondaryLabel = describePawnForSummary(
+        state,
+        colors,
+        move.secondaryPawnId
+      );
+      const primarySteps = move.steps != null ? move.steps : 0;
+      const secondarySteps =
+        move.secondarySteps != null ? move.secondarySteps : 0;
+
+      if (cardName === "7") {
+        const primaryStepsText =
+          primarySteps === 1 ? "1 space" : `${primarySteps} spaces`;
+        const secondaryStepsText =
+          secondarySteps === 1 ? "1 space" : `${secondarySteps} spaces`;
+        const primaryDestPhrase = describeDestinationForSummary(move);
+        const secondaryDestPhrase = describeSecondaryDestinationForSummary(move);
+
+        const primaryPart = primaryDestPhrase
+          ? `${primaryLabel} forward ${primaryStepsText} (${primaryDestPhrase})`
+          : `${primaryLabel} forward ${primaryStepsText}`;
+        const secondaryPart = secondaryDestPhrase
+          ? `${secondaryLabel} forward ${secondaryStepsText} (${secondaryDestPhrase})`
+          : `${secondaryLabel} forward ${secondaryStepsText}`;
+
+        return `${primaryPart}; ${secondaryPart}.`;
+      }
+
+      const destPhrase = describeDestinationForSummary(move);
+      if (destPhrase) {
+        return `${primaryLabel} + ${secondaryLabel} split ${primarySteps}+${secondarySteps} (${destPhrase}).`;
+      }
+      return `${primaryLabel} + ${secondaryLabel} split ${primarySteps}+${secondarySteps}.`;
+    }
+    if (move.targetPawnId) {
+      const primaryLabel = describePawnForSummary(state, colors, move.pawnId);
+      const targetLabel = describePawnForSummary(
+        state,
+        colors,
+        move.targetPawnId
+      );
+      let verb = "targeting";
+      if (cardName === "Sorry!") {
+        verb = "¡Lo siento! bumping";
+      } else if (cardName === "11") {
+        verb = "switching places with";
+      }
+      const destPhrase = describeDestinationForSummary(move);
+      if (destPhrase) {
+        return `${primaryLabel} ${verb} ${targetLabel} (${destPhrase}).`;
+      }
+      return `${primaryLabel} ${verb} ${targetLabel}.`;
+    }
+    if (move.direction && move.steps != null) {
+      const board = state && state.board ? state.board : null;
+      const pawnsList = board && Array.isArray(board.pawns) ? board.pawns : [];
+      const pawn = pawnsList.find((p) => p.pawnId === move.pawnId);
+      const pos = pawn && pawn.position ? pawn.position : null;
+      const posType = pos && typeof pos.type === "string" ? pos.type : null;
+
+      const primaryLabel = describePawnForSummary(state, colors, move.pawnId);
+
+      if (
+        (cardName === "1" || cardName === "2") &&
+        posType === "start" &&
+        move.direction === "forward" &&
+        move.steps > 0
+      ) {
+        const stepsText =
+          move.steps === 1 ? "1 space" : `${move.steps} spaces`;
+        const destPhrase = describeDestinationForSummary(move);
+        if (destPhrase) {
+          return `${primaryLabel} leaving start (${stepsText}) (${destPhrase}).`;
+        }
+        return `${primaryLabel} leaving start (${stepsText}).`;
+      }
+
+      const destPhrase = describeDestinationForSummary(move);
+      if (destPhrase) {
+        return `${primaryLabel} ${move.direction} ${move.steps} (${destPhrase}).`;
+      }
+      return `${primaryLabel} ${move.direction} ${move.steps}.`;
+    }
+    return "";
+  }
+
+  function findSelectedMove(movesArray, selectedIndex) {
+    if (!Array.isArray(movesArray)) return null;
+    if (selectedIndex == null) return null;
+    return (
+      movesArray.find((m) => m && m.index === selectedIndex) || null
+    );
   }
 
   function trackIndexForCoord(row, col) {
@@ -280,6 +514,7 @@
 
     if (!state) {
       gameMetaEl.textContent = "Game has not started yet.";
+      if (gameCardEl) gameCardEl.innerHTML = "";
       trackGridEl.innerHTML = "";
       return;
     }
@@ -326,12 +561,27 @@
         const prevSeatIndex =
           lastHistorySeatIndex != null ? lastHistorySeatIndex : state.currentSeatIndex;
         const newCards = discard.slice(lastHistoryDiscardLength);
+        let attachedPendingSummary = false;
         newCards.forEach((card) => {
-          cardHistory.push({ card, seatIndex: prevSeatIndex, expanded: false });
+          const entry = { card, seatIndex: prevSeatIndex, expanded: false };
+          if (
+            !attachedPendingSummary &&
+            pendingHistoryDetails &&
+            pendingHistoryDetails.seatIndex === prevSeatIndex &&
+            typeof pendingHistoryDetails.summary === "string" &&
+            pendingHistoryDetails.summary
+          ) {
+            entry.moveSummary = pendingHistoryDetails.summary;
+            attachedPendingSummary = true;
+          }
+          cardHistory.push(entry);
           if (cardHistory.length > 50) {
             cardHistory = cardHistory.slice(cardHistory.length - 50);
           }
         });
+        if (attachedPendingSummary) {
+          pendingHistoryDetails = null;
+        }
         lastHistoryDiscardLength = discard.length;
         lastHistorySeatIndex = state.currentSeatIndex;
       } else {
@@ -355,7 +605,7 @@
         ? "Card shown above. Click a highlighted pawn to choose a move, then Play turn."
         : "Waiting for card preview."
       : "";
-    const cardName = displayCard || "No card";
+    const cardName = displayCard === "Sorry!" ? "¡Lo siento!" : displayCard || "No card";
     const cardDescription = displayCard
       ? getCardDescription(displayCard) || "Card effect available."
       : "No card drawn yet.";
@@ -365,78 +615,25 @@
     const hasSelectedMove = hasIndexedMoves && selectedMoveIndex != null;
 
     let selectedMove = null;
-
-    function describePawnForSummary(pawnId) {
-      if (!pawnId) return "";
-      const board = state && state.board ? state.board : null;
-      const pawnsList =
-        board && Array.isArray(board.pawns) ? board.pawns : [];
-      const pawn = pawnsList.find((p) => p.pawnId === pawnId);
-      if (!pawn || !pawn.position) {
-        return String(pawnId);
-      }
-      const seatIndex = pawn.seatIndex;
-      const color = colors[seatIndex] || "red";
-      const pos = pawn.position;
-      if (pos.type === "track") {
-        const tileIndex =
-          typeof pos.index === "number" ? pos.index : 0;
-        return `${color} (tile ${tileIndex})`;
-      }
-      if (pos.type === "start") {
-        return `${color} (start)`;
-      }
-      if (pos.type === "home") {
-        return `${color} (home)`;
-      }
-      if (pos.type === "safety") {
-        const safeIndex =
-          typeof pos.index === "number" ? pos.index + 1 : 1;
-        return `${color} (safe zone ${safeIndex})`;
-      }
-      return color;
-    }
-
     let selectedMoveSummary = "";
     if (hasSelectedMove) {
-      const move =
-        movesArray.find((m) => m.index === selectedMoveIndex) || null;
+      const move = findSelectedMove(movesArray, selectedMoveIndex);
       if (move) {
         selectedMove = move;
-        if (
-          move.secondaryPawnId &&
-          move.secondaryDirection &&
-          move.secondarySteps != null
-        ) {
-          const primarySteps = move.steps != null ? move.steps : 0;
-          const secondarySteps =
-            move.secondarySteps != null ? move.secondarySteps : 0;
-          const primaryLabel = describePawnForSummary(move.pawnId);
-          const secondaryLabel = describePawnForSummary(
-            move.secondaryPawnId
-          );
-          selectedMoveSummary = `Selected: ${primaryLabel} + ${secondaryLabel} split ${primarySteps}+${secondarySteps}.`;
-        } else if (move.targetPawnId) {
-          const primaryLabel = describePawnForSummary(move.pawnId);
-          const targetLabel = describePawnForSummary(
-            move.targetPawnId
-          );
-          let verb = "targeting";
-          if (displayCard === "Sorry!") {
-            verb = "Sorry! bumping";
-          } else if (displayCard === "11") {
-            verb = "switching places with";
-          }
-          selectedMoveSummary = `Selected: ${primaryLabel} ${verb} ${targetLabel}.`;
-        } else if (move.direction && move.steps != null) {
-          const primaryLabel = describePawnForSummary(move.pawnId);
-          selectedMoveSummary = `Selected: ${primaryLabel} ${move.direction} ${move.steps}.`;
+        const baseSummary = buildMoveSummaryBase(
+          displayCard,
+          move,
+          state,
+          colors
+        );
+        if (baseSummary) {
+          selectedMoveSummary = `Selected: ${baseSummary}`;
         }
       }
     }
 
-    gameMetaEl.innerHTML = `
-      <div class="game-meta-grid">
+    if (gameMetaEl) {
+      gameMetaEl.innerHTML = `
         <div class="game-info-card">
           <div class="game-info-title">Game info</div>
           <div class="game-info-rows">
@@ -459,16 +656,17 @@
           </div>
           ${genericHint ? `<div class="game-info-hint">${genericHint}</div>` : ""}
         </div>
-        <div class="game-card-panel">
-          <div class="game-card-surface">
-            <div class="game-card-label">Last card</div>
-            <div class="game-card-name">${cardName}</div>
-            <div class="game-card-desc">${cardDescription}</div>
-            ${selectedMoveSummary ? `<div class="game-card-selected">${selectedMoveSummary}</div>` : ""}
-          </div>
-        </div>
-      </div>
-    `;
+      `;
+    }
+
+    if (gameCardEl) {
+      gameCardEl.innerHTML = `
+        <div class="game-card-label">Last card</div>
+        <div class="game-card-name">${cardName}</div>
+        <div class="game-card-desc">${cardDescription}</div>
+        ${selectedMoveSummary ? `<div class="game-card-selected">${selectedMoveSummary}</div>` : ""}
+      `;
+    }
 
     const seats = g.seats || [];
     const currentSeatSeat = seats[state.currentSeatIndex];
@@ -660,6 +858,32 @@
       });
     });
 
+    let selectedDestTrackIndex = null;
+    let selectedDestSafetySeatIndex = null;
+    let selectedDestSafetyIndex = null;
+    let selectedDestHomeSeatIndex = null;
+
+    if (selectedMove && selectedMove.destType) {
+      const pawnForSelected = pawns.find((p) => p.pawnId === selectedMove.pawnId);
+      const seatIndexForSelected =
+        pawnForSelected && typeof pawnForSelected.seatIndex === "number"
+          ? pawnForSelected.seatIndex
+          : null;
+
+      if (selectedMove.destType === "track" && typeof selectedMove.destIndex === "number") {
+        selectedDestTrackIndex = selectedMove.destIndex;
+      } else if (
+        selectedMove.destType === "safety" &&
+        typeof selectedMove.destIndex === "number" &&
+        seatIndexForSelected != null
+      ) {
+        selectedDestSafetySeatIndex = seatIndexForSelected;
+        selectedDestSafetyIndex = selectedMove.destIndex;
+      } else if (selectedMove.destType === "home" && seatIndexForSelected != null) {
+        selectedDestHomeSeatIndex = seatIndexForSelected;
+      }
+    }
+
     pawns.forEach((p) => {
       const pos = p.position || {};
       const seatIndex = p.seatIndex;
@@ -782,6 +1006,116 @@
             markerEl.textContent = markerChar;
             cell.appendChild(markerEl);
           }
+
+          if (
+            selectedDestTrackIndex != null &&
+            typeof idx === "number" &&
+            idx === selectedDestTrackIndex
+          ) {
+            cell.classList.add("track-cell-selected-dest");
+          }
+
+          // For cards 7, 10, and 11, when a pawn is selected, highlight any
+          // track tiles that are primary destinations for that pawn and allow
+          // clicking the tile to choose the corresponding move.
+          if (
+            selectedPawnId &&
+            (upcomingCard === "7" || upcomingCard === "10" || upcomingCard === "11")
+          ) {
+            const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+            let matchingMoves = [];
+
+            if (upcomingCard === "7") {
+              if (selectedSecondaryPawnId) {
+                // Split-7: require both primary and secondary pawn to match so
+                // the highlighted destinations correspond to the chosen pair.
+                matchingMoves = movesArray.filter(
+                  (m) =>
+                    m.card === "7" &&
+                    m.pawnId === selectedPawnId &&
+                    m.secondaryPawnId === selectedSecondaryPawnId &&
+                    m.destType === "track" &&
+                    typeof m.destIndex === "number" &&
+                    m.destIndex === idx
+                );
+              } else {
+                // Single-7: only consider moves where this pawn alone moves 7
+                // spaces (no secondary pawn).
+                matchingMoves = movesArray.filter(
+                  (m) =>
+                    m.card === "7" &&
+                    m.pawnId === selectedPawnId &&
+                    !m.secondaryPawnId &&
+                    m.destType === "track" &&
+                    typeof m.destIndex === "number" &&
+                    m.destIndex === idx
+                );
+              }
+            } else {
+              matchingMoves = movesArray.filter(
+                (m) =>
+                  m.pawnId === selectedPawnId &&
+                  m.destType === "track" &&
+                  typeof m.destIndex === "number" &&
+                  m.destIndex === idx
+              );
+            }
+
+            if (matchingMoves.length > 0) {
+              cell.classList.add("track-cell-dest-highlight");
+              cell.addEventListener("click", () => {
+                const movesNow = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+                let candidates = [];
+
+                if (upcomingCard === "7") {
+                  if (selectedSecondaryPawnId) {
+                    candidates = movesNow.filter(
+                      (m) =>
+                        m.card === "7" &&
+                        m.pawnId === selectedPawnId &&
+                        m.secondaryPawnId === selectedSecondaryPawnId &&
+                        m.destType === "track" &&
+                        typeof m.destIndex === "number" &&
+                        m.destIndex === idx
+                    );
+                  } else {
+                    candidates = movesNow.filter(
+                      (m) =>
+                        m.card === "7" &&
+                        m.pawnId === selectedPawnId &&
+                        !m.secondaryPawnId &&
+                        m.destType === "track" &&
+                        typeof m.destIndex === "number" &&
+                        m.destIndex === idx
+                    );
+                  }
+                } else {
+                  candidates = movesNow.filter(
+                    (m) =>
+                      m.pawnId === selectedPawnId &&
+                      m.destType === "track" &&
+                      typeof m.destIndex === "number" &&
+                      m.destIndex === idx
+                  );
+                }
+
+                if (!candidates.length) return;
+                let chosen = null;
+                if (selectedMoveIndex != null) {
+                  const currentIdx = candidates.findIndex(
+                    (m) => m.index === selectedMoveIndex
+                  );
+                  const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
+                  chosen = candidates[nextIdx];
+                } else {
+                  chosen = candidates[0];
+                }
+                if (!chosen || typeof chosen.index !== "number") return;
+                selectedMoveIndex = chosen.index;
+                renderGame();
+              });
+            }
+          }
         }
 
         if (safetyGeom) {
@@ -792,6 +1126,23 @@
         }
         if (startHomeGeom) {
           cell.classList.add("track-cell-start-home");
+        }
+
+        if (
+          safetyGeom &&
+          selectedDestSafetySeatIndex != null &&
+          selectedDestSafetyIndex != null &&
+          safetyGeom.seatIndex === selectedDestSafetySeatIndex &&
+          safetyGeom.safetyIndex === selectedDestSafetyIndex
+        ) {
+          cell.classList.add("track-cell-selected-dest");
+        }
+        if (
+          homeGeom &&
+          selectedDestHomeSeatIndex != null &&
+          homeGeom.seatIndex === selectedDestHomeSeatIndex
+        ) {
+          cell.classList.add("track-cell-selected-dest");
         }
 
         let ownerSeatIndex = null;
@@ -886,12 +1237,73 @@
         if (occupant) {
           const dot = document.createElement("div");
           dot.className = `pawn-dot ${occupant.color}`;
+
           const isLegalMover = legalMoverPawnIds && legalMoverPawnIds.has(occupant.pawnId);
+          const isOwnSeat = occupant.seatIndex === state.currentSeatIndex;
+
           if (isLegalMover) {
             dot.classList.add("legal-mover");
             dot.addEventListener("click", () => {
               const pawnId = occupant.pawnId;
               const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+
+              // For Sorry!, clicking your own Start pawn arms the move and lets
+              // you pick a specific opponent pawn as the target.
+              if (upcomingCard === "Sorry!") {
+                selectedPawnId = pawnId;
+                // Clear any previously chosen indexed move so the player must
+                // click a concrete opponent target.
+                selectedMoveIndex = null;
+                renderGame();
+                return;
+              }
+
+              // Card 7: first click selects the primary pawn, second click
+              // selects a secondary pawn (if a split-7 move exists between
+              // them). After two pawns are chosen, click a highlighted
+              // destination tile to pick the exact split.
+              if (upcomingCard === "7") {
+                if (!selectedPawnId || (selectedPawnId && selectedSecondaryPawnId)) {
+                  selectedPawnId = pawnId;
+                  selectedSecondaryPawnId = null;
+                  selectedMoveIndex = null;
+                  renderGame();
+                  return;
+                }
+
+                if (selectedPawnId && !selectedSecondaryPawnId) {
+                  if (pawnId === selectedPawnId) {
+                    // Clicking the same pawn again keeps it as the primary;
+                    // the player will choose a destination tile next.
+                    return;
+                  }
+
+                  const hasSplitWithThisPair = movesArray.some(
+                    (m) =>
+                      m.card === "7" &&
+                      m.pawnId === selectedPawnId &&
+                      m.secondaryPawnId === pawnId
+                  );
+
+                  if (hasSplitWithThisPair) {
+                    selectedSecondaryPawnId = pawnId;
+                    selectedMoveIndex = null;
+                    renderGame();
+                    return;
+                  }
+
+                  // No split with the previously selected pawn; treat this
+                  // pawn as the new primary selection.
+                  selectedPawnId = pawnId;
+                  selectedSecondaryPawnId = null;
+                  selectedMoveIndex = null;
+                  renderGame();
+                  return;
+                }
+              }
+
+              // Default behavior for all other cards: clicking a legal mover
+              // cycles through that pawn's available moves.
               const candidates = movesArray.filter((m) => m.pawnId === pawnId);
               let chosen = null;
               if (candidates.length > 0) {
@@ -909,6 +1321,72 @@
             });
           }
 
+          // For Sorry!, once an own Start pawn is selected, opponent pawns that
+          // are legal targets become clickable so you can choose exactly which
+          // pawn to bump.
+          if (
+            upcomingCard === "Sorry!" &&
+            selectedPawnId &&
+            !isOwnSeat
+          ) {
+            const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+            const hasSorryMoveToThisPawn = movesArray.some(
+              (m) =>
+                m.pawnId === selectedPawnId &&
+                m.targetPawnId &&
+                m.targetPawnId === occupant.pawnId
+            );
+
+            if (hasSorryMoveToThisPawn) {
+              dot.classList.add("legal-mover");
+              dot.addEventListener("click", () => {
+                const moves = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+                const move = moves.find(
+                  (m) =>
+                    m.pawnId === selectedPawnId &&
+                    m.targetPawnId &&
+                    m.targetPawnId === occupant.pawnId
+                );
+                if (!move || typeof move.index !== "number") return;
+                selectedMoveIndex = move.index;
+                renderGame();
+              });
+            }
+          }
+
+          // For card 11, once one of your pawns is selected as the source, any
+          // opponent pawns that are legal switch targets become clickable so
+          // you can pick the exact pawn to swap with.
+          if (
+            upcomingCard === "11" &&
+            selectedPawnId &&
+            !isOwnSeat
+          ) {
+            const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+            const hasSwitchToThisPawn = movesArray.some(
+              (m) =>
+                m.pawnId === selectedPawnId &&
+                m.targetPawnId &&
+                m.targetPawnId === occupant.pawnId
+            );
+
+            if (hasSwitchToThisPawn) {
+              dot.classList.add("legal-mover");
+              dot.addEventListener("click", () => {
+                const moves = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+                const move = moves.find(
+                  (m) =>
+                    m.pawnId === selectedPawnId &&
+                    m.targetPawnId &&
+                    m.targetPawnId === occupant.pawnId
+                );
+                if (!move || typeof move.index !== "number") return;
+                selectedMoveIndex = move.index;
+                renderGame();
+              });
+            }
+          }
+
           let isPrimarySelected = false;
           let isTargetSelected = false;
           let isSecondarySelected = false;
@@ -923,8 +1401,13 @@
             if (selectedMove.secondaryPawnId && occupant.pawnId === selectedMove.secondaryPawnId) {
               isSecondarySelected = true;
             }
-          } else if (selectedPawnId && occupant.pawnId === selectedPawnId) {
-            isPrimarySelected = true;
+          } else {
+            if (selectedPawnId && occupant.pawnId === selectedPawnId) {
+              isPrimarySelected = true;
+            }
+            if (selectedSecondaryPawnId && occupant.pawnId === selectedSecondaryPawnId) {
+              isSecondarySelected = true;
+            }
           }
 
           if (isPrimarySelected || isTargetSelected || isSecondarySelected) {
@@ -986,7 +1469,11 @@
 
           const cardLabel = document.createElement("span");
           cardLabel.className = "card-history-card";
-          cardLabel.textContent = entry && entry.card != null ? String(entry.card) : "";
+          let cardText = entry && entry.card != null ? String(entry.card) : "";
+          if (cardText === "Sorry!") {
+            cardText = "¡Lo siento!";
+          }
+          cardLabel.textContent = cardText;
 
           header.appendChild(seatLabel);
           header.appendChild(cardLabel);
@@ -1006,6 +1493,13 @@
               descEl.classList.add("hidden");
             }
             descEl.textContent = descText;
+            if (entry && typeof entry.moveSummary === "string" && entry.moveSummary) {
+              descEl.appendChild(document.createElement("br"));
+              const moveEl = document.createElement("span");
+              moveEl.className = "card-history-move";
+              moveEl.textContent = `Move: ${entry.moveSummary}`;
+              descEl.appendChild(moveEl);
+            }
 
             toggle.addEventListener("click", () => {
               const isHidden = descEl.classList.contains("hidden");
@@ -1140,6 +1634,34 @@
       return;
     }
     try {
+      let historySummary = "";
+      let historySeatIndex = null;
+      if (currentGame && currentGame.state && currentGame.state.result === "active") {
+        const g = currentGame;
+        const state = g.state;
+        const colors = seatColorMap(g);
+        const move = findSelectedMove(movesArray, selectedMoveIndex);
+        if (move && upcomingCard) {
+          const base = buildMoveSummaryBase(
+            upcomingCard,
+            move,
+            state,
+            colors
+          );
+          if (base) {
+            historySummary = base;
+            historySeatIndex = state.currentSeatIndex;
+          }
+        }
+      }
+      if (historySummary && historySeatIndex != null) {
+        pendingHistoryDetails = {
+          seatIndex: historySeatIndex,
+          summary: historySummary,
+        };
+      } else {
+        pendingHistoryDetails = null;
+      }
       const payload = selectedMoveIndex != null ? { moveIndex: selectedMoveIndex } : {};
       const data = await api("/play", {
         method: "POST",
@@ -1147,12 +1669,14 @@
       });
       currentGame = data;
       selectedPawnId = null;
+      selectedSecondaryPawnId = null;
       selectedMoveIndex = null;
       upcomingCard = null;
       upcomingMoves = [];
       legalMoverPawnIds = new Set();
       renderFromGame();
     } catch (err) {
+      pendingHistoryDetails = null;
       showToast(`Move failed: ${err.message}`);
     }
   }
@@ -1186,18 +1710,35 @@
       if (!currentGame || !currentGame.state || currentGame.phase !== "active") {
         legalMoverPawnIds = new Set();
         selectedPawnId = null;
+        selectedSecondaryPawnId = null;
         upcomingCard = null;
         upcomingMoves = [];
         selectedMoveIndex = null;
+        lastPreviewGameId = null;
+        lastPreviewTurnNumber = null;
         return;
       }
       const state = currentGame.state;
       if (state.result !== "active") {
         legalMoverPawnIds = new Set();
         selectedPawnId = null;
+        selectedSecondaryPawnId = null;
         upcomingCard = null;
         upcomingMoves = [];
         selectedMoveIndex = null;
+        lastPreviewGameId = null;
+        lastPreviewTurnNumber = null;
+        return;
+      }
+
+      const gameId = currentGame.gameId;
+      const turnNumber = state.turnNumber;
+
+      // The backend preview is deterministic for a given game/turn. Avoid
+      // re-calling it repeatedly for the same (gameId, turnNumber) and just
+      // reuse the cached upcomingCard/moves instead.
+      if (lastPreviewGameId === gameId && lastPreviewTurnNumber === turnNumber) {
+        renderGame();
         return;
       }
 
@@ -1208,9 +1749,12 @@
       if (!resp.ok) {
         legalMoverPawnIds = new Set();
         selectedPawnId = null;
+        selectedSecondaryPawnId = null;
         upcomingCard = null;
         upcomingMoves = [];
         selectedMoveIndex = null;
+        lastPreviewGameId = null;
+        lastPreviewTurnNumber = null;
         return;
       }
       const data = await resp.json();
@@ -1222,6 +1766,7 @@
 
       if (selectedPawnId && !legalMoverPawnIds.has(selectedPawnId)) {
         selectedPawnId = null;
+        selectedSecondaryPawnId = selectedSecondaryPawnId; // Keep selectedSecondaryPawnId consistent
       }
 
       if (selectedMoveIndex != null) {
@@ -1240,13 +1785,20 @@
           selectedPawnId = onlyMove.pawnId || null;
         }
       }
+
+      lastPreviewGameId = gameId;
+      lastPreviewTurnNumber = turnNumber;
       renderGame();
     } catch (err) {
       // Advisory only; ignore errors.
       legalMoverPawnIds = new Set();
+      selectedPawnId = null;
+      selectedSecondaryPawnId = null;
       upcomingCard = null;
       upcomingMoves = [];
       selectedMoveIndex = null;
+      lastPreviewGameId = null;
+      lastPreviewTurnNumber = null;
     }
   }
 
@@ -1258,6 +1810,15 @@
     leaveLobbyBtn.addEventListener("click", handleLeave);
 
     leaveGameBtn.addEventListener("click", handleLeave);
+    if (autoplayBotBtn) {
+      autoplayBotBtn.addEventListener("click", () => {
+        if (autoplayBotEnabled) {
+          stopAutoplay();
+        } else {
+          startAutoplay();
+        }
+      });
+    }
     if (turnActionBtn) {
       turnActionBtn.addEventListener("click", handleTurnAction);
     }

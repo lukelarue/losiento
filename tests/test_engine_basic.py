@@ -46,6 +46,28 @@ class EngineBasicTests(unittest.TestCase):
         pawns0 = [p for p in new_state.pawns if p.seat_index == 0]
         self.assertTrue(any(p.position.kind != "start" for p in pawns0), "card 1 should move a pawn out of start")
 
+    def test_card1_from_start_lands_on_start_exit(self) -> None:
+        state, _, _ = self._make_basic_state()
+        start_exit = first_slide_indices(0)[-1]
+        moves = get_legal_moves(state, seat_index=0, card="1")
+        self.assertTrue(moves, "expected at least one legal move for card 1")
+        move = moves[0]
+        new_state = apply_move(state, move)
+        pawn_new = next(p for p in new_state.pawns if p.pawn_id == move.pawn_id)
+        self.assertEqual(pawn_new.position.kind, "track")
+        self.assertEqual(pawn_new.position.index, start_exit)
+
+    def test_card2_from_start_lands_on_start_exit(self) -> None:
+        state, _, _ = self._make_basic_state()
+        start_exit = first_slide_indices(0)[-1]
+        moves = get_legal_moves(state, seat_index=0, card="2")
+        self.assertTrue(moves, "expected at least one legal move for card 2")
+        move = moves[0]
+        new_state = apply_move(state, move)
+        pawn_new = next(p for p in new_state.pawns if p.pawn_id == move.pawn_id)
+        self.assertEqual(pawn_new.position.kind, "track")
+        self.assertEqual(pawn_new.position.index, start_exit)
+
     def test_card4_moves_backward(self) -> None:
         # First, move a pawn for seat 0 out of start with card 1
         state, _, _ = self._make_basic_state()
@@ -61,7 +83,7 @@ class EngineBasicTests(unittest.TestCase):
         # At least one pawn for seat 0 should have changed position
         self.assertNotEqual(before_positions, after_positions)
 
-    def test_card10_uses_backward_when_forward_impossible(self) -> None:
+    def test_card10_has_backward_when_forward_impossible(self) -> None:
         state, _, _ = self._make_basic_state()
 
         # Place a pawn for seat 0 in Safety Zone index 0. From here, a forward-10
@@ -77,7 +99,7 @@ class EngineBasicTests(unittest.TestCase):
         forward_moves = [m for m in moves if m.direction == "forward"]
         backward_moves = [m for m in moves if m.direction == "backward" and m.steps == 1]
         self.assertFalse(forward_moves, "no forward-10 move should be legal from safety index 0")
-        self.assertTrue(backward_moves, "expected a backward-1 move when forward-10 is impossible")
+        self.assertTrue(backward_moves, "expected at least one backward-1 move when forward-10 is impossible")
 
         before_pos = (pawn.position.kind, pawn.position.index)
         new_state = apply_move(state, backward_moves[0])

@@ -165,9 +165,6 @@ def _apply_single_forward(state: GameState, pawn: Pawn, steps: int) -> bool:
         if steps < 1:
             return False
         track_index = start_idx
-        remaining = steps - 1
-        if remaining > 0:
-            track_index = _advance_track(track_index, remaining)
         final_pos, slide_indices = _apply_slides_and_safety(state, pawn, track_index, forward=True)
     elif pos.kind == "track":
         cur = pos.index or 0
@@ -306,9 +303,9 @@ def get_legal_moves(state: GameState, seat_index: int, card: Card) -> List[Move]
     """Enumerate legal moves for the given seat and card.
 
     This implementation mirrors the current behavior in InMemoryPersistence:
-    - No 7-split; 7 is a single forward-7 move.
+    - No 7-split; 7 is a single forward-7 move (plus split-7 support below).
     - 11 supports either forward-11 or switch with an opponent pawn on the track.
-    - 10 prefers forward-10; only uses backward-1 if no forward moves exist.
+    - 10 offers both forward-10 and backward-1 moves whenever they are legal.
     - Sorry! from Start to an opponent pawn on the track, with slide rules applied.
     """
 
@@ -405,15 +402,11 @@ def get_legal_moves(state: GameState, seat_index: int, card: Card) -> List[Move]
     elif card == "8":
         collect_forward(moves, 8, allow_from_start=False)
     elif card == "10":
-        # Prefer forward-10; if no such moves exist, allow backward-1 moves.
-        forward_moves: List[Move] = []
-        collect_forward(forward_moves, 10, allow_from_start=False)
-        if forward_moves:
-            moves.extend(forward_moves)
-        else:
-            backward_moves: List[Move] = []
-            collect_backward(backward_moves, 1)
-            moves.extend(backward_moves)
+        # Card 10: always offer both forward-10 and backward-1 moves when legal.
+        # The player may choose either option, but must make a move if at least
+        # one legal move (forward or backward) exists.
+        collect_forward(moves, 10, allow_from_start=False)
+        collect_backward(moves, 1)
     elif card == "11":
         # Support both forward-11 and switch-with-opponent behavior.
         # First, collect standard forward-11 moves.

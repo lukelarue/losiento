@@ -52,8 +52,8 @@ On a player’s turn:
 
 - All of a player’s pawns begin in Start.
 - A pawn may only move from Start onto the main track when the player draws a **1**, **2**, or **Sorry!** card.
-  - A 1 or 2 moves a pawn from Start to the space directly outside Start for that color.
-  - A 2 used to leave Start does **not** allow that pawn to move an extra space; it only enters the first space.
+  - A 1 or 2 moves a pawn from Start to the space directly outside Start for that color (the square at the **end of that color’s first slide**, sometimes called the "start-exit" space).
+  - From Start, both 1 and 2 behave the same: the pawn always ends on this start-exit space and does **not** move any further along the outer track.
   - A `Sorry!` card can also move a pawn directly from Start to an opponent’s occupied space (see card details below).
 
 ### 5.2 Normal Movement
@@ -167,10 +167,10 @@ Notice a few features:
 The Lo Siento deck has 45 cards. Card counts and their meanings are as follows:
 
 - **1**
-  - Either move a pawn from Start **or** move one pawn **1 space forward**.
+  - Either move a pawn from Start to the space directly outside Start (the end of your first slide) **or** move one pawn **1 space forward**.
 
 - **2**
-  - Either move a pawn from Start **or** move one pawn **2 spaces forward**.
+  - Either move a pawn from Start to the **same** space directly outside Start (no extra step) **or** move one pawn **2 spaces forward**.
   - Drawing a 2, **even if no pawn can move**, entitles the player to **draw again at the end of their turn**.
 
 - **3**
