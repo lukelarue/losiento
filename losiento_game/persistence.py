@@ -454,12 +454,16 @@ class InMemoryPersistence:
         # Handle bumps
         if final_pos.kind == "track":
             target = self._find_pawn_on_track(state, final_pos.index or 0)
-            if target is not None and target.seat_index == pawn.seat_index:
-                # Cannot bump own pawn on direct landing
-                return False
-            # Bump opponent on destination
-            if target is not None:
-                target.position = PawnPosition(kind="start", index=None)
+            if slide_indices:
+                if target is not None and target is not pawn:
+                    target.position = PawnPosition(kind="start", index=None)
+            else:
+                if target is not None and target.seat_index == pawn.seat_index:
+                    # Cannot bump own pawn on direct landing
+                    return False
+                # Bump opponent on destination
+                if target is not None:
+                    target.position = PawnPosition(kind="start", index=None)
 
         if final_pos.kind == "safety":
             target = self._find_pawn_in_safety(state, pawn.seat_index, final_pos.index or 0)
@@ -493,10 +497,14 @@ class InMemoryPersistence:
 
         if final_pos.kind == "track":
             target = self._find_pawn_on_track(state, final_pos.index or 0)
-            if target is not None and target.seat_index == pawn.seat_index:
-                return False
-            if target is not None:
-                target.position = PawnPosition(kind="start", index=None)
+            if slide_indices:
+                if target is not None and target is not pawn:
+                    target.position = PawnPosition(kind="start", index=None)
+            else:
+                if target is not None and target.seat_index == pawn.seat_index:
+                    return False
+                if target is not None:
+                    target.position = PawnPosition(kind="start", index=None)
 
         if final_pos.kind == "safety":
             target = self._find_pawn_in_safety(state, pawn.seat_index, final_pos.index or 0)
@@ -618,7 +626,13 @@ class InMemoryPersistence:
         tmp_state = copy.deepcopy(state)
         card = self._draw_card(tmp_state)
         moves = get_legal_moves(tmp_state, seat_index, card)
-        pawn_ids = sorted({m.pawn_id for m in moves if m.seat_index == seat_index})
+        primary_ids = {m.pawn_id for m in moves if m.seat_index == seat_index}
+        secondary_ids = {
+            m.secondary_pawn_id
+            for m in moves
+            if m.seat_index == seat_index and m.secondary_pawn_id is not None
+        }
+        pawn_ids = sorted(primary_ids | secondary_ids)
 
         moves_payload: List[Dict[str, Any]] = []
         for idx, m in enumerate(moves):

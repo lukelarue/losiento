@@ -82,7 +82,7 @@
       case "10":
         return "Card 10 – move 10 spaces forward or 1 space backward.";
       case "11":
-        return "Card 11 – move 11 spaces forward or switch with an opponent pawn.";
+        return "Card 11 – move 11 spaces forward or switch with an opponent pawn. If you cannot move forward 11 spaces, you may either end your turn without moving or choose any one legal switch; you are never required to switch solely because a switch is available.";
       case "12":
         return "Card 12 – move a pawn 12 spaces forward.";
       case "Sorry!":
@@ -738,6 +738,13 @@
 
     const pawns = (state.board && state.board.pawns) || [];
 
+    const pawnSeatById = new Map();
+    pawns.forEach((p) => {
+      if (p && typeof p.pawnId === "string" && typeof p.seatIndex === "number") {
+        pawnSeatById.set(p.pawnId, p.seatIndex);
+      }
+    });
+
     const trackMap = new Map();
     const homeCount = {};
 
@@ -1158,6 +1165,87 @@
           }
         }
 
+        if (homeGeom && selectedPawnId && upcomingCard === "7") {
+          const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+          const homeSeatIndex = homeGeom.seatIndex;
+          let matchingHomeMoves = [];
+
+          if (selectedSecondaryPawnId) {
+            matchingHomeMoves = movesArray.filter(
+              (m) =>
+                m.card === "7" &&
+                ((m.pawnId === selectedPawnId &&
+                  m.secondaryPawnId === selectedSecondaryPawnId) ||
+                  (m.pawnId === selectedSecondaryPawnId &&
+                    m.secondaryPawnId === selectedPawnId)) &&
+                ((m.destType === "home" &&
+                  pawnSeatById.get(m.pawnId) === homeSeatIndex) ||
+                  (m.secondaryDestType === "home" &&
+                    m.secondaryPawnId &&
+                    pawnSeatById.get(m.secondaryPawnId) === homeSeatIndex))
+            );
+          } else {
+            matchingHomeMoves = movesArray.filter(
+              (m) =>
+                m.card === "7" &&
+                m.pawnId === selectedPawnId &&
+                !m.secondaryPawnId &&
+                m.destType === "home" &&
+                pawnSeatById.get(m.pawnId) === homeSeatIndex
+            );
+          }
+
+          if (matchingHomeMoves.length > 0) {
+            cell.classList.add("track-cell-dest-highlight");
+            cell.addEventListener("click", () => {
+              const movesNow = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+              const homeSeatIndexNow = homeGeom.seatIndex;
+              let candidates = [];
+
+              if (selectedSecondaryPawnId) {
+                candidates = movesNow.filter(
+                  (m) =>
+                    m.card === "7" &&
+                    ((m.pawnId === selectedPawnId &&
+                      m.secondaryPawnId === selectedSecondaryPawnId) ||
+                      (m.pawnId === selectedSecondaryPawnId &&
+                        m.secondaryPawnId === selectedPawnId)) &&
+                    ((m.destType === "home" &&
+                      pawnSeatById.get(m.pawnId) === homeSeatIndexNow) ||
+                      (m.secondaryDestType === "home" &&
+                        m.secondaryPawnId &&
+                        pawnSeatById.get(m.secondaryPawnId) === homeSeatIndexNow))
+                );
+              } else {
+                candidates = movesNow.filter(
+                  (m) =>
+                    m.card === "7" &&
+                    m.pawnId === selectedPawnId &&
+                    !m.secondaryPawnId &&
+                    m.destType === "home" &&
+                    pawnSeatById.get(m.pawnId) === homeSeatIndexNow
+                );
+              }
+
+              if (!candidates.length) return;
+              let chosen = null;
+              if (selectedMoveIndex != null) {
+                const currentIdx = candidates.findIndex(
+                  (m) => m.index === selectedMoveIndex
+                );
+                const nextIdx =
+                  currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
+                chosen = candidates[nextIdx];
+              } else {
+                chosen = candidates[0];
+              }
+              if (!chosen || typeof chosen.index !== "number") return;
+              selectedMoveIndex = chosen.index;
+              renderGame();
+            });
+          }
+        }
+
         if (safetyGeom) {
           cell.classList.add("track-cell-safety");
         }
@@ -1303,7 +1391,7 @@
               // them). After two pawns are chosen, click a highlighted
               // destination tile to pick the exact split.
               if (upcomingCard === "7") {
-                if (!selectedPawnId || (selectedPawnId && selectedSecondaryPawnId)) {
+                if (!selectedPawnId) {
                   selectedPawnId = pawnId;
                   selectedSecondaryPawnId = null;
                   selectedMoveIndex = null;
@@ -1311,6 +1399,7 @@
                   return;
                 }
 
+                // One pawn currently selected; try to form a split pair.
                 if (selectedPawnId && !selectedSecondaryPawnId) {
                   if (pawnId === selectedPawnId) {
                     // Clicking the same pawn again keeps it as the primary;
@@ -1341,6 +1430,66 @@
                   selectedMoveIndex = null;
                   renderGame();
                   return;
+                }
+
+                // Two pawns already selected: keep the most recently selected
+                // pawn and add the newly clicked pawn as the other half of the
+                // pair, when a split-7 move exists for that pair.
+                if (selectedPawnId && selectedSecondaryPawnId) {
+                  // Clicking one of the already selected pawns collapses to a
+                  // single-pawn selection for that pawn.
+                  if (pawnId === selectedPawnId || pawnId === selectedSecondaryPawnId) {
+                    selectedPawnId = pawnId;
+                    selectedSecondaryPawnId = null;
+                    selectedMoveIndex = null;
+                    renderGame();
+                    return;
+                  }
+
+                  const newPrimary = selectedSecondaryPawnId;
+                  const newSecondary = pawnId;
+
+                  const hasSplitWithNewPair = movesArray.some(
+                    (m) =>
+                      m.card === "7" &&
+                      ((m.pawnId === newPrimary &&
+                        m.secondaryPawnId === newSecondary) ||
+                        (m.pawnId === newSecondary &&
+                          m.secondaryPawnId === newPrimary))
+                  );
+
+                  if (hasSplitWithNewPair) {
+                    selectedPawnId = newPrimary;
+                    selectedSecondaryPawnId = newSecondary;
+                    selectedMoveIndex = null;
+                    renderGame();
+                    return;
+                  }
+
+                  // If there is no split for the rolling pair, fall back to
+                  // treating the clicked pawn as the new primary.
+                  selectedPawnId = pawnId;
+                  selectedSecondaryPawnId = null;
+                  selectedMoveIndex = null;
+                  renderGame();
+                  return;
+                }
+              }
+
+              if (upcomingCard === "11" && onlySwitchMovesFor11) {
+                if (selectedPawnId === pawnId && selectedMoveIndex != null) {
+                  const selectedMove = findSelectedMove(movesArray, selectedMoveIndex);
+                  if (
+                    selectedMove &&
+                    selectedMove.pawnId === pawnId &&
+                    selectedMove.targetPawnId
+                  ) {
+                    selectedPawnId = null;
+                    selectedSecondaryPawnId = null;
+                    selectedMoveIndex = null;
+                    renderGame();
+                    return;
+                  }
                 }
               }
 

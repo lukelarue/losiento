@@ -197,10 +197,14 @@ def _apply_single_forward(state: GameState, pawn: Pawn, steps: int) -> bool:
 
     if final_pos.kind == "track":
         target = _find_pawn_on_track(state, final_pos.index or 0)
-        if target is not None and target.seat_index == pawn.seat_index:
-            return False
-        if target is not None:
-            target.position = PawnPosition(kind="start", index=None)
+        if slide_indices:
+            if target is not None and target is not pawn:
+                target.position = PawnPosition(kind="start", index=None)
+        else:
+            if target is not None and target.seat_index == pawn.seat_index:
+                return False
+            if target is not None:
+                target.position = PawnPosition(kind="start", index=None)
 
     if final_pos.kind == "safety":
         target = _find_pawn_in_safety(state, pawn.seat_index, final_pos.index or 0)
@@ -233,10 +237,14 @@ def _apply_single_backward(state: GameState, pawn: Pawn, steps: int) -> bool:
 
     if final_pos.kind == "track":
         target = _find_pawn_on_track(state, final_pos.index or 0)
-        if target is not None and target.seat_index == pawn.seat_index:
-            return False
-        if target is not None:
-            target.position = PawnPosition(kind="start", index=None)
+        if slide_indices:
+            if target is not None and target is not pawn:
+                target.position = PawnPosition(kind="start", index=None)
+        else:
+            if target is not None and target.seat_index == pawn.seat_index:
+                return False
+            if target is not None:
+                target.position = PawnPosition(kind="start", index=None)
 
     if final_pos.kind == "safety":
         target = _find_pawn_in_safety(state, pawn.seat_index, final_pos.index or 0)

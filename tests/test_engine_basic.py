@@ -6,6 +6,7 @@ from losiento_game.engine import (
     get_legal_moves,
     apply_move,
     first_slide_indices,
+    second_slide_indices,
     TRACK_LEN,
     Move,
     safe_entry_index,
@@ -222,6 +223,38 @@ class EngineBasicTests(unittest.TestCase):
 
         other_slide_indices = first_slide_indices(1)
         slide_end = other_slide_indices[-1]
+
+        self.assertEqual(mover_new.position.kind, "track")
+        self.assertEqual(mover_new.position.index, slide_end)
+        self.assertEqual(blocker_new.position.kind, "start")
+
+    def test_backward_4_from_second_slide_end_allows_slide_and_bumps_enemy(self) -> None:
+        state, _, _ = self._make_basic_state()
+
+        slide_indices = second_slide_indices(0)
+        slide_start = slide_indices[0]
+        slide_end = slide_indices[-1]
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawns1 = [p for p in state.pawns if p.seat_index == 1]
+
+        mover = pawns0[0]
+        mover.position = PawnPosition(kind="track", index=slide_end)
+
+        blocker = pawns1[0]
+        blocker.position = PawnPosition(kind="track", index=slide_indices[1])
+
+        moves = get_legal_moves(state, seat_index=0, card="4")
+        back_moves = [
+            m
+            for m in moves
+            if m.pawn_id == mover.pawn_id and m.direction == "backward" and m.steps == 4
+        ]
+        self.assertTrue(back_moves, "expected a backward-4 move from second slide end")
+
+        new_state = apply_move(state, back_moves[0])
+        mover_new = next(p for p in new_state.pawns if p.pawn_id == mover.pawn_id)
+        blocker_new = next(p for p in new_state.pawns if p.pawn_id == blocker.pawn_id)
 
         self.assertEqual(mover_new.position.kind, "track")
         self.assertEqual(mover_new.position.index, slide_end)
