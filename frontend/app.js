@@ -1246,6 +1246,103 @@
           }
         }
 
+        // Card 7: allow selecting moves that end in a Safety Zone cell by
+        // clicking that safety tile, for both single-7 and split-7 moves.
+        if (safetyGeom && selectedPawnId && upcomingCard === "7") {
+          const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+          const safetySeatIndex = safetyGeom.seatIndex;
+          const safetyIndex = safetyGeom.safetyIndex;
+          let matchingSafetyMoves = [];
+
+          if (selectedSecondaryPawnId) {
+            matchingSafetyMoves = movesArray.filter(
+              (m) =>
+                m.card === "7" &&
+                ((m.pawnId === selectedPawnId &&
+                  m.secondaryPawnId === selectedSecondaryPawnId) ||
+                  (m.pawnId === selectedSecondaryPawnId &&
+                    m.secondaryPawnId === selectedPawnId)) &&
+                ((m.destType === "safety" &&
+                  pawnSeatById.get(m.pawnId) === safetySeatIndex &&
+                  typeof m.destIndex === "number" &&
+                  m.destIndex === safetyIndex) ||
+                  (m.secondaryDestType === "safety" &&
+                    m.secondaryPawnId &&
+                    pawnSeatById.get(m.secondaryPawnId) === safetySeatIndex &&
+                    typeof m.secondaryDestIndex === "number" &&
+                    m.secondaryDestIndex === safetyIndex))
+            );
+          } else {
+            matchingSafetyMoves = movesArray.filter(
+              (m) =>
+                m.card === "7" &&
+                m.pawnId === selectedPawnId &&
+                !m.secondaryPawnId &&
+                m.destType === "safety" &&
+                pawnSeatById.get(m.pawnId) === safetySeatIndex &&
+                typeof m.destIndex === "number" &&
+                m.destIndex === safetyIndex
+            );
+          }
+
+          if (matchingSafetyMoves.length > 0) {
+            cell.classList.add("track-cell-dest-highlight");
+            cell.addEventListener("click", () => {
+              const movesNow = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+              const safetySeatIndexNow = safetyGeom.seatIndex;
+              const safetyIndexNow = safetyGeom.safetyIndex;
+              let candidates = [];
+
+              if (selectedSecondaryPawnId) {
+                candidates = movesNow.filter(
+                  (m) =>
+                    m.card === "7" &&
+                    ((m.pawnId === selectedPawnId &&
+                      m.secondaryPawnId === selectedSecondaryPawnId) ||
+                      (m.pawnId === selectedSecondaryPawnId &&
+                        m.secondaryPawnId === selectedPawnId)) &&
+                    ((m.destType === "safety" &&
+                      pawnSeatById.get(m.pawnId) === safetySeatIndexNow &&
+                      typeof m.destIndex === "number" &&
+                      m.destIndex === safetyIndexNow) ||
+                      (m.secondaryDestType === "safety" &&
+                        m.secondaryPawnId &&
+                        pawnSeatById.get(m.secondaryPawnId) === safetySeatIndexNow &&
+                        typeof m.secondaryDestIndex === "number" &&
+                        m.secondaryDestIndex === safetyIndexNow))
+                );
+              } else {
+                candidates = movesNow.filter(
+                  (m) =>
+                    m.card === "7" &&
+                    m.pawnId === selectedPawnId &&
+                    !m.secondaryPawnId &&
+                    m.destType === "safety" &&
+                    pawnSeatById.get(m.pawnId) === safetySeatIndexNow &&
+                    typeof m.destIndex === "number" &&
+                    m.destIndex === safetyIndexNow
+                );
+              }
+
+              if (!candidates.length) return;
+              let chosen = null;
+              if (selectedMoveIndex != null) {
+                const currentIdx = candidates.findIndex(
+                  (m) => m.index === selectedMoveIndex
+                );
+                const nextIdx =
+                  currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
+                chosen = candidates[nextIdx];
+              } else {
+                chosen = candidates[0];
+              }
+              if (!chosen || typeof chosen.index !== "number") return;
+              selectedMoveIndex = chosen.index;
+              renderGame();
+            });
+          }
+        }
+
         if (safetyGeom) {
           cell.classList.add("track-cell-safety");
         }
