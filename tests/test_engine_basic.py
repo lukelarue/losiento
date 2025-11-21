@@ -466,11 +466,11 @@ class PersistenceInMemoryTests(unittest.TestCase):
         persistence.start_game(game_id, "u0")
         return persistence, game_id
 
-    def test_card2_play_move_draws_two_cards_and_keeps_turn(self) -> None:
+    def test_card2_play_move_draws_one_card_and_keeps_turn(self) -> None:
         persistence, game_id = self._make_started_game()
         game = persistence.games[game_id]
         state = game["state"]
-        # Force a deterministic deck for the test: first card is 2, second is 3.
+        # Force a deterministic deck for the test: first card is 2.
         state.deck = ["2", "3", "3"]
         state.discard_pile = []
 
@@ -481,8 +481,9 @@ class PersistenceInMemoryTests(unittest.TestCase):
         persistence.play_move(game_id, "u0", {"moveIndex": 0})
 
         state_after = persistence.games[game_id]["state"]
-        self.assertEqual(len(state_after.discard_pile), 2)
-        self.assertEqual(deck_len_before - len(state_after.deck), 2)
+        # Card 2 should draw exactly one card but keep the same turn/seat.
+        self.assertEqual(len(state_after.discard_pile), 1)
+        self.assertEqual(deck_len_before - len(state_after.deck), 1)
         self.assertEqual(state_after.turn_number, turn_before)
         self.assertEqual(state_after.current_seat_index, current_before)
 
@@ -562,13 +563,13 @@ class PersistenceInMemoryTests(unittest.TestCase):
             persistence.play_move(game_id, "u0", {"moveIndex": 0})
         self.assertEqual(str(ctx.exception), "game_over")
 
-    def test_card2_bot_step_draws_two_cards_and_keeps_turn(self) -> None:
+    def test_card2_bot_step_draws_one_card_and_keeps_turn(self) -> None:
         persistence, game_id = self._make_started_game()
         game = persistence.games[game_id]
         state = game["state"]
         # Ensure it is the bot seat's turn.
         state.current_seat_index = 1
-        # Deterministic deck: first card is 2, second is 3.
+        # Deterministic deck: first card is 2.
         state.deck = ["2", "3", "3"]
         state.discard_pile = []
 
@@ -583,6 +584,65 @@ class PersistenceInMemoryTests(unittest.TestCase):
         self.assertEqual(deck_len_before - len(state_after.deck), 2)
         self.assertEqual(state_after.turn_number, turn_before)
         self.assertEqual(state_after.current_seat_index, current_before)
+
+    def test_card11_only_switch_allows_end_turn_without_move(self) -> None:
+        persistence, game_id = self._make_started_game()
+        game = persistence.games[game_id]
+        state = game["state"]
+
+        # Arrange pawns so seat 0 has a track pawn that cannot move forward 11
+        # (it would overshoot Home from behind its own Safety Zone entry), plus
+        # an opponent pawn on the track to enable switch moves.
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawns1 = [p for p in state.pawns if p.seat_index == 1]
+
+        entry_idx = safe_entry_index(0)
+        behind_idx = (entry_idx - 2) % TRACK_LEN
+
+        mover = pawns0[0]
+        mover.position = PawnPosition(kind="track", index=behind_idx)
+
+        # Leave other seat 0 pawns in Start so they cannot use card 11 to
+        # leave Start.
+
+        target = pawns1[0]
+        target.position = PawnPosition(kind="track", index=5)
+
+        # Force the next drawn card to be 11.
+        state.deck = ["11", "3", "4"]
+        state.discard_pile = []
+
+        # Sanity check: from this configuration, legal moves for card 11 for
+        # seat 0 should consist only of switch moves (no forward-11 moves).
+        moves = get_legal_moves(state, seat_index=0, card="11")
+        forward_moves = [m for m in moves if m.direction == "forward" and m.steps == 11]
+        switch_moves = [m for m in moves if m.card == "11" and m.target_pawn_id is not None]
+        self.assertFalse(forward_moves, "expected no forward-11 moves in this setup")
+        self.assertTrue(switch_moves, "expected at least one 11-switch move in this setup")
+
+        before_positions = {p.pawn_id: (p.position.kind, p.position.index) for p in state.pawns}
+        turn_before = state.turn_number
+        current_before = state.current_seat_index
+        deck_len_before = len(state.deck)
+
+        # Play the turn with an empty payload. With only switch moves
+        # available for card 11, the rules allow the player to end their turn
+        # without switching.
+        persistence.play_move(game_id, "u0", {})
+
+        state_after = persistence.games[game_id]["state"]
+
+        # Card 11 should have been drawn and discarded.
+        self.assertEqual(len(state_after.discard_pile), 1)
+        self.assertEqual(deck_len_before - len(state_after.deck), 1)
+
+        # No pawn positions should have changed (no switch applied).
+        after_positions = {p.pawn_id: (p.position.kind, p.position.index) for p in state_after.pawns}
+        self.assertEqual(before_positions, after_positions)
+
+        # Turn should advance to the next seat as usual for a non-2 card.
+        self.assertEqual(state_after.turn_number, turn_before + 1)
+        self.assertNotEqual(state_after.current_seat_index, current_before)
 
 
 if __name__ == "__main__":

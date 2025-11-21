@@ -51,6 +51,7 @@
   let autoplayTimeout = null;
   let lastPreviewGameId = null;
   let lastPreviewTurnNumber = null;
+  let lastPreviewDiscardLength = null;
 
   function showToast(message, millis = 2500) {
     toastEl.textContent = message;
@@ -67,7 +68,7 @@
       case "1":
         return "Card 1 – move a pawn 1 space, or leave Start to the space just outside Start (end of your first slide).";
       case "2":
-        return "Card 2 – move a pawn 2 spaces, or leave Start to the same space just outside Start, then draw again.";
+        return "Card 2 – move a pawn 2 spaces, or leave Start to the same space just outside Start, then take another turn.";
       case "3":
         return "Card 3 – move a pawn 3 spaces forward.";
       case "4":
@@ -160,7 +161,7 @@
     }
     if (autoplayBotBtn) {
       autoplayBotBtn.classList.remove("autoplay-on");
-      autoplayBotBtn.textContent = "Autoplay bot turns";
+      autoplayBotBtn.textContent = "Autoplay bot turns (off)";
     }
   }
 
@@ -218,6 +219,7 @@
       lastHistorySeatIndex = null;
       lastPreviewGameId = null;
       lastPreviewTurnNumber = null;
+      lastPreviewDiscardLength = null;
       setScreen("noGame");
       return;
     }
@@ -240,6 +242,7 @@
       stopAutoplay();
       lastPreviewGameId = null;
       lastPreviewTurnNumber = null;
+      lastPreviewDiscardLength = null;
     }
   }
 
@@ -511,6 +514,8 @@
     const g = currentGame;
     const state = g.state;
     const colors = seatColorMap(g);
+    const viewerSeatIndex =
+      typeof g.viewerSeatIndex === "number" ? g.viewerSeatIndex : null;
 
     if (!state) {
       gameMetaEl.textContent = "Game has not started yet.";
@@ -545,7 +550,8 @@
 
     if (!historyInitialized) {
       if (discard.length > 0) {
-        discard.forEach((card) => {
+        const initialCards = discard.slice(-10);
+        initialCards.forEach((card) => {
           cardHistory.push({ card, seatIndex: null, expanded: false });
         });
       }
@@ -575,8 +581,8 @@
             attachedPendingSummary = true;
           }
           cardHistory.push(entry);
-          if (cardHistory.length > 50) {
-            cardHistory = cardHistory.slice(cardHistory.length - 50);
+          if (cardHistory.length > 10) {
+            cardHistory = cardHistory.slice(cardHistory.length - 10);
           }
         });
         if (attachedPendingSummary) {
@@ -613,6 +619,12 @@
     const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
     const hasIndexedMoves = isActive && movesArray.length > 0;
     const hasSelectedMove = hasIndexedMoves && selectedMoveIndex != null;
+    const onlySwitchMovesFor11 =
+      isActive &&
+      isPreviewingCard &&
+      upcomingCard === "11" &&
+      movesArray.length > 0 &&
+      !movesArray.some((m) => m.direction === "forward" && m.steps === 11);
 
     let selectedMove = null;
     let selectedMoveSummary = "";
@@ -629,6 +641,17 @@
         if (baseSummary) {
           selectedMoveSummary = `Selected: ${baseSummary}`;
         }
+      }
+    }
+
+    let moveStatusHtml = "";
+    if (isActive && isPreviewingCard) {
+      if (!hasIndexedMoves) {
+        moveStatusHtml =
+          '<div class="game-card-move-status game-card-move-status-none">No available moves</div>';
+      } else if (!hasSelectedMove) {
+        moveStatusHtml =
+          '<div class="game-card-move-status game-card-move-status-unselected">No move selected</div>';
       }
     }
 
@@ -664,6 +687,7 @@
         <div class="game-card-label">Last card</div>
         <div class="game-card-name">${cardName}</div>
         <div class="game-card-desc">${cardDescription}</div>
+        ${moveStatusHtml}
         ${selectedMoveSummary ? `<div class="game-card-selected">${selectedMoveSummary}</div>` : ""}
       `;
     }
@@ -684,7 +708,8 @@
         turnActionBtn.classList.add("turn-btn-bot");
       } else {
         label = "Play turn";
-        turnActionBtn.disabled = !isActive || (hasIndexedMoves && !hasSelectedMove);
+        const requiresSelection = hasIndexedMoves && !onlySwitchMovesFor11;
+        turnActionBtn.disabled = !isActive || (requiresSelection && !hasSelectedMove);
         turnActionBtn.classList.add("turn-btn-human");
       }
       turnActionBtn.textContent = label;
@@ -944,7 +969,12 @@
           label.textContent = `Seat ${seatIndex}${suffix}`;
           pill.appendChild(label);
 
-          if (state.result === "active" && state.currentSeatIndex === seatIndex) {
+          if (
+            state.result === "active" &&
+            state.currentSeatIndex === seatIndex &&
+            viewerSeatIndex != null &&
+            viewerSeatIndex === seatIndex
+          ) {
             const turnPill = document.createElement("span");
             turnPill.className = "your-turn-pill";
             turnPill.textContent = "Your turn";
@@ -1032,11 +1062,16 @@
                 matchingMoves = movesArray.filter(
                   (m) =>
                     m.card === "7" &&
-                    m.pawnId === selectedPawnId &&
-                    m.secondaryPawnId === selectedSecondaryPawnId &&
-                    m.destType === "track" &&
-                    typeof m.destIndex === "number" &&
-                    m.destIndex === idx
+                    ((m.pawnId === selectedPawnId &&
+                      m.secondaryPawnId === selectedSecondaryPawnId) ||
+                      (m.pawnId === selectedSecondaryPawnId &&
+                        m.secondaryPawnId === selectedPawnId)) &&
+                    ((m.destType === "track" &&
+                      typeof m.destIndex === "number" &&
+                      m.destIndex === idx) ||
+                      (m.secondaryDestType === "track" &&
+                        typeof m.secondaryDestIndex === "number" &&
+                        m.secondaryDestIndex === idx))
                 );
               } else {
                 // Single-7: only consider moves where this pawn alone moves 7
@@ -1072,11 +1107,16 @@
                     candidates = movesNow.filter(
                       (m) =>
                         m.card === "7" &&
-                        m.pawnId === selectedPawnId &&
-                        m.secondaryPawnId === selectedSecondaryPawnId &&
-                        m.destType === "track" &&
-                        typeof m.destIndex === "number" &&
-                        m.destIndex === idx
+                        ((m.pawnId === selectedPawnId &&
+                          m.secondaryPawnId === selectedSecondaryPawnId) ||
+                          (m.pawnId === selectedSecondaryPawnId &&
+                            m.secondaryPawnId === selectedPawnId)) &&
+                        ((m.destType === "track" &&
+                          typeof m.destIndex === "number" &&
+                          m.destIndex === idx) ||
+                          (m.secondaryDestType === "track" &&
+                            typeof m.secondaryDestIndex === "number" &&
+                            m.secondaryDestIndex === idx))
                     );
                   } else {
                     candidates = movesNow.filter(
@@ -1281,8 +1321,10 @@
                   const hasSplitWithThisPair = movesArray.some(
                     (m) =>
                       m.card === "7" &&
-                      m.pawnId === selectedPawnId &&
-                      m.secondaryPawnId === pawnId
+                      ((m.pawnId === selectedPawnId &&
+                        m.secondaryPawnId === pawnId) ||
+                        (m.pawnId === pawnId &&
+                          m.secondaryPawnId === selectedPawnId))
                   );
 
                   if (hasSplitWithThisPair) {
@@ -1433,6 +1475,16 @@
     }
 
     if (cardHistoryEl) {
+      let prevScrollTop = 0;
+      let prevScrollHeight = 0;
+      let hadList = false;
+      const existingList = cardHistoryEl.querySelector(".card-history-list");
+      if (existingList) {
+        prevScrollTop = existingList.scrollTop;
+        prevScrollHeight = existingList.scrollHeight;
+        hadList = true;
+      }
+
       cardHistoryEl.innerHTML = "";
       if (!cardHistory || cardHistory.length === 0) {
         const empty = document.createElement("div");
@@ -1519,6 +1571,20 @@
           list.appendChild(item);
         });
         cardHistoryEl.appendChild(list);
+
+        if (hadList) {
+          const newList = cardHistoryEl.querySelector(".card-history-list");
+          if (newList) {
+            const newScrollHeight = newList.scrollHeight;
+            if (prevScrollTop > 0 && prevScrollHeight > 0) {
+              const delta = newScrollHeight - prevScrollHeight;
+              const target = prevScrollTop + delta;
+              newList.scrollTop = target > 0 ? target : 0;
+            } else {
+              newList.scrollTop = 0;
+            }
+          }
+        }
       }
     }
   }
@@ -1629,7 +1695,11 @@
     if (!currentGame) return;
     const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
     const hasMultipleMoves = movesArray.length > 1;
-    if (hasMultipleMoves && selectedMoveIndex == null) {
+    const onlySwitchMovesFor11 =
+      upcomingCard === "11" &&
+      movesArray.length > 0 &&
+      !movesArray.some((m) => m.direction === "forward" && m.steps === 11);
+    if (hasMultipleMoves && selectedMoveIndex == null && !onlySwitchMovesFor11) {
       showToast("Select a highlighted pawn/move before playing your turn.");
       return;
     }
@@ -1716,6 +1786,7 @@
         selectedMoveIndex = null;
         lastPreviewGameId = null;
         lastPreviewTurnNumber = null;
+        lastPreviewDiscardLength = null;
         return;
       }
       const state = currentGame.state;
@@ -1728,16 +1799,23 @@
         selectedMoveIndex = null;
         lastPreviewGameId = null;
         lastPreviewTurnNumber = null;
+        lastPreviewDiscardLength = null;
         return;
       }
 
       const gameId = currentGame.gameId;
       const turnNumber = state.turnNumber;
+      const discard = Array.isArray(state.discardPile) ? state.discardPile : [];
+      const discardLen = discard.length;
 
       // The backend preview is deterministic for a given game/turn. Avoid
       // re-calling it repeatedly for the same (gameId, turnNumber) and just
       // reuse the cached upcomingCard/moves instead.
-      if (lastPreviewGameId === gameId && lastPreviewTurnNumber === turnNumber) {
+      if (
+        lastPreviewGameId === gameId &&
+        lastPreviewTurnNumber === turnNumber &&
+        lastPreviewDiscardLength === discardLen
+      ) {
         renderGame();
         return;
       }
@@ -1755,6 +1833,7 @@
         selectedMoveIndex = null;
         lastPreviewGameId = null;
         lastPreviewTurnNumber = null;
+        lastPreviewDiscardLength = null;
         return;
       }
       const data = await resp.json();
@@ -1788,6 +1867,7 @@
 
       lastPreviewGameId = gameId;
       lastPreviewTurnNumber = turnNumber;
+      lastPreviewDiscardLength = discardLen;
       renderGame();
     } catch (err) {
       // Advisory only; ignore errors.
@@ -1799,6 +1879,7 @@
       selectedMoveIndex = null;
       lastPreviewGameId = null;
       lastPreviewTurnNumber = null;
+      lastPreviewDiscardLength = null;
     }
   }
 
@@ -1811,6 +1892,7 @@
 
     leaveGameBtn.addEventListener("click", handleLeave);
     if (autoplayBotBtn) {
+      autoplayBotBtn.textContent = "Autoplay bot turns (off)";
       autoplayBotBtn.addEventListener("click", () => {
         if (autoplayBotEnabled) {
           stopAutoplay();

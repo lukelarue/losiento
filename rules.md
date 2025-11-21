@@ -204,7 +204,7 @@ The Lo Siento deck has 45 cards. Card counts and their meanings are as follows:
   - An 11 **cannot** be used to:
     - Move a pawn out of Start.
     - Switch with a pawn in a Safety Zone.
-  - If the player cannot move forward 11 spaces and does not have a legal switch, they may end their turn without moving.
+  - If the player cannot move forward 11 spaces, they may either end their turn without moving or, if they have at least one legal switch, choose any one of those switch moves; they are never required to switch solely because a switch is available.
 
 - **12**
   - Move one pawn **12 spaces forward**.

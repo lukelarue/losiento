@@ -658,31 +658,40 @@ class InMemoryPersistence:
         if seat_index != state.current_seat_index:
             raise ValueError("not_your_turn")
 
-        card = self._draw_card(state)
+        deck_before = list(state.deck)
+        discard_before = list(state.discard_pile)
 
-        # Use the pure rules engine to compute and apply a move.
-        moves = get_legal_moves(state, seat_index, card)
-        if moves:
-            selected_move = _select_move(moves, payload)
-            state = apply_move(state, selected_move)
-            game["state"] = state
+        try:
+            card = self._draw_card(state)
 
-        self._check_winner(game, state)
+            # Use the pure rules engine to compute and apply a move.
+            moves = get_legal_moves(state, seat_index, card)
+            if moves:
+                if (
+                    card == "11"
+                    and not any(m.direction == "forward" and m.steps == 11 for m in moves)
+                    and isinstance(payload, dict)
+                    and not payload
+                ):
+                    # Card 11 with only switch moves: allow the player to end their
+                    # turn without switching, even though legal switch moves exist.
+                    # In this case we simply do not apply any move.
+                    pass
+                else:
+                    selected_move = _select_move(moves, payload)
+                    state = apply_move(state, selected_move)
+                    game["state"] = state
 
-        # Card 2 grants an extra turn (draw another card) even if no move occurred.
-        if state.result == "active" and card == "2":
-            extra_card = self._draw_card(state)
-            extra_moves = get_legal_moves(state, seat_index, extra_card)
-            if extra_moves:
-                # For the extra draw we continue to pick the first legal
-                # move; client selection for this secondary move is not yet
-                # supported.
-                state = apply_move(state, extra_moves[0])
-                game["state"] = state
             self._check_winner(game, state)
-
-        if state.result == "active" and card != "2":
-            self._advance_turn(game, state)
+            # Card 2 grants an extra turn by keeping the same current_seat_index.
+            # No extra card is drawn or auto-played here; the next call to
+            # play_move will draw the next card for this same player.
+            if state.result == "active" and card != "2":
+                self._advance_turn(game, state)
+        except ValueError:
+            state.deck = deck_before
+            state.discard_pile = discard_before
+            raise
 
         game["updated_at"] = _now()
         return game
@@ -710,16 +719,6 @@ class InMemoryPersistence:
             game["state"] = state
         self._check_winner(game, state)
 
-        if state.result == "active" and card == "2":
-            extra_card = self._draw_card(state)
-            extra_moves = get_legal_moves(state, current, extra_card)
-            if extra_moves:
-                rnd = __import__("random")
-                move = rnd.choice(extra_moves)
-                state = apply_move(state, move)
-                game["state"] = state
-            self._check_winner(game, state)
-
         if state.result == "active" and card != "2":
             self._advance_turn(game, state)
 
@@ -733,6 +732,11 @@ class InMemoryPersistence:
         else:
             state_dict = None
         seats: List[Seat] = game["seats"]
+        viewer_seat_index: Optional[int] = None
+        for s in seats:
+            if s.player_id == user_id:
+                viewer_seat_index = s.index
+                break
         return {
             "gameId": game["game_id"],
             "phase": game["phase"],
@@ -754,6 +758,7 @@ class InMemoryPersistence:
                 for s in seats
             ],
             "state": state_dict["state"] if state_dict else None,
+            "viewerSeatIndex": viewer_seat_index,
         }
 
 
@@ -1450,47 +1455,42 @@ class FirestorePersistence:
 
             moves = get_legal_moves(state, seat_index, card)
             if moves:
-                # Snapshot state before and after applying the selected move so
-                # we can log a move document.
-                before_state_for_logging = game_state_to_dict(state)["state"]
-
-                selected_move = _select_move(moves, payload)
-                state = apply_move(state, selected_move)
-
-                after_state_for_logging = game_state_to_dict(state)["state"]
-                self._log_move_doc(
-                    game_ref=game_ref,
-                    game_id=game_id,
-                    card=card,
-                    seat_index=seat_index,
-                    player_id=user_id,
-                    state_before=before_state_for_logging,
-                    state_after=after_state_for_logging,
-                    transaction=transaction,
-                )
-
-            self._check_winner_state(state)
-
-            # Card 2 grants an extra turn (draw another card) even if no move occurred.
-            if state.result == "active" and card == "2":
-                extra_card = self._draw_card(state)
-                extra_moves = get_legal_moves(state, seat_index, extra_card)
-                if extra_moves:
+                if (
+                    card == "11"
+                    and not any(m.direction == "forward" and m.steps == 11 for m in moves)
+                    and isinstance(payload, dict)
+                    and not payload
+                ):
+                    # Card 11 with only switch moves: allow the player to end
+                    # their turn without switching, even when legal switches
+                    # exist. In this case we do not apply any move or log a
+                    # move document.
+                    pass
+                else:
+                    # Snapshot state before and after applying the selected move so
+                    # we can log a move document.
                     before_state_for_logging = game_state_to_dict(state)["state"]
-                    state = apply_move(state, extra_moves[0])
+
+                    selected_move = _select_move(moves, payload)
+                    state = apply_move(state, selected_move)
+
                     after_state_for_logging = game_state_to_dict(state)["state"]
                     self._log_move_doc(
                         game_ref=game_ref,
                         game_id=game_id,
-                        card=extra_card,
+                        card=card,
                         seat_index=seat_index,
                         player_id=user_id,
                         state_before=before_state_for_logging,
                         state_after=after_state_for_logging,
                         transaction=transaction,
                     )
-                self._check_winner_state(state)
 
+            self._check_winner_state(state)
+
+            # Card 2 grants an extra turn by keeping the same current_seat_index.
+            # No extra card is drawn or auto-played here; the next call to
+            # play_move will draw the next card for this same player.
             if state.result == "active" and card != "2":
                 self._advance_turn(seats_data, state)
 
@@ -1561,27 +1561,6 @@ class FirestorePersistence:
 
             self._check_winner_state(state)
 
-            if state.result == "active" and card == "2":
-                extra_card = self._draw_card(state)
-                extra_moves = get_legal_moves(state, current, extra_card)
-                if extra_moves:
-                    before_state_for_logging = game_state_to_dict(state)["state"]
-                    rnd = __import__("random")
-                    move = rnd.choice(extra_moves)
-                    state = apply_move(state, move)
-                    after_state_for_logging = game_state_to_dict(state)["state"]
-                    self._log_move_doc(
-                        game_ref=game_ref,
-                        game_id=game_id,
-                        card=extra_card,
-                        seat_index=current,
-                        player_id=None,
-                        state_before=before_state_for_logging,
-                        state_after=after_state_for_logging,
-                        transaction=transaction,
-                    )
-                self._check_winner_state(state)
-
             if state.result == "active" and card != "2":
                 self._advance_turn(seats_data, state)
 
@@ -1609,6 +1588,11 @@ class FirestorePersistence:
 
         seats: List[Dict[str, Any]] = game.get("seats", [])
         settings = game.get("settings", {})
+        viewer_seat_index: Optional[int] = None
+        for s in seats:
+            if s.get("playerId") == user_id:
+                viewer_seat_index = s.get("index")
+                break
         return {
             "gameId": game.get("gameId"),
             "phase": game.get("phase"),
@@ -1632,4 +1616,5 @@ class FirestorePersistence:
             # For now, state is only present for future start_game / gameplay
             # implementations. Lobby games have state = None.
             "state": (game.get("state") if game.get("state") is not None else None),
+            "viewerSeatIndex": viewer_seat_index,
         }
