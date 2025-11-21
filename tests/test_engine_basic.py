@@ -232,7 +232,6 @@ class EngineBasicTests(unittest.TestCase):
         state, _, _ = self._make_basic_state()
 
         slide_indices = second_slide_indices(0)
-        slide_start = slide_indices[0]
         slide_end = slide_indices[-1]
 
         pawns0 = [p for p in state.pawns if p.seat_index == 0]
@@ -432,7 +431,6 @@ class EngineBasicTests(unittest.TestCase):
     def test_sorry_cannot_target_safety_or_home(self) -> None:
         state, _, _ = self._make_basic_state()
 
-        pawns0 = [p for p in state.pawns if p.seat_index == 0]
         pawns1 = [p for p in state.pawns if p.seat_index == 1]
 
         track_pawn = pawns1[0]

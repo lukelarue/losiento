@@ -1172,14 +1172,12 @@ class FirestorePersistence:
             return self._snapshot_to_game(game_ref.get())
 
         # Non-host: convert their seat into a bot seat.
-        seat_found = False
         for s in seats:
             if s.get("playerId") == user_id:
                 s["playerId"] = None
                 s["displayName"] = None
                 s["isBot"] = True
                 s["status"] = "bot"
-                seat_found = True
 
         data["seats"] = seats
         data["updatedAt"] = now
