@@ -22,6 +22,7 @@
   const gameMetaEl = document.getElementById("game-meta");
   const gameCardEl = document.getElementById("game-card");
   const trackGridEl = document.getElementById("track-grid");
+  const turnBlurbEl = document.getElementById("turn-blurb");
   const startAreasEl = document.getElementById("start-areas");
   const safetyHomeEl = document.getElementById("safety-home");
   const cardHistoryEl = document.getElementById("card-history");
@@ -518,7 +519,9 @@
       typeof g.viewerSeatIndex === "number" ? g.viewerSeatIndex : null;
 
     if (!state) {
-      gameMetaEl.textContent = "Game has not started yet.";
+      if (turnBlurbEl) {
+        turnBlurbEl.textContent = "Game has not started yet.";
+      }
       if (gameCardEl) gameCardEl.innerHTML = "";
       trackGridEl.innerHTML = "";
       return;
@@ -655,31 +658,16 @@
       }
     }
 
-    if (gameMetaEl) {
-      gameMetaEl.innerHTML = `
-        <div class="game-info-card">
-          <div class="game-info-title">Game info</div>
-          <div class="game-info-rows">
-            <div class="game-info-row">
-              <span class="game-info-label">Game</span>
-              <span class="game-info-value">#${g.gameId}</span>
-            </div>
-            <div class="game-info-row">
-              <span class="game-info-label">Turn</span>
-              <span class="game-info-value">${state.turnNumber}</span>
-            </div>
-            <div class="game-info-row">
-              <span class="game-info-label">Current seat</span>
-              <span class="game-info-value">Seat ${state.currentSeatIndex}</span>
-            </div>
-            <div class="game-info-row">
-              <span class="game-info-label">Status</span>
-              <span class="game-info-value game-status-pill game-status-${state.result}">${resultText}</span>
-            </div>
-          </div>
-          ${genericHint ? `<div class="game-info-hint">${genericHint}</div>` : ""}
-        </div>
-      `;
+    if (turnBlurbEl) {
+      if (state && typeof state.turnNumber === "number") {
+        if (state.result === "active") {
+          turnBlurbEl.textContent = `Turn ${state.turnNumber}`;
+        } else {
+          turnBlurbEl.textContent = `Game over · Turn ${state.turnNumber}`;
+        }
+      } else {
+        turnBlurbEl.textContent = "";
+      }
     }
 
     if (gameCardEl) {
@@ -976,17 +964,19 @@
           label.textContent = `Seat ${seatIndex}${suffix}`;
           pill.appendChild(label);
 
-          if (
+          const isViewerTurn =
             state.result === "active" &&
             state.currentSeatIndex === seatIndex &&
             viewerSeatIndex != null &&
-            viewerSeatIndex === seatIndex
-          ) {
-            const turnPill = document.createElement("span");
-            turnPill.className = "your-turn-pill";
-            turnPill.textContent = "Your turn";
-            pill.appendChild(turnPill);
+            viewerSeatIndex === seatIndex;
+
+          const turnPill = document.createElement("span");
+          turnPill.className = "your-turn-pill";
+          if (!isViewerTurn) {
+            turnPill.classList.add("your-turn-pill-inactive");
           }
+          turnPill.textContent = "Your turn";
+          pill.appendChild(turnPill);
 
           const home = homeCount[seatIndex] || 0;
           const homeSpan = document.createElement("span");

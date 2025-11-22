@@ -52,26 +52,30 @@
         <section id="screen-game" class="screen hidden">
           <div class="game-layout">
             <div class="game-left">
-              <div class="game-top-row">
-                <div class="game-top-primary">
-                  <button id="turn-action">Play turn</button>
-                </div>
-                <div class="game-card-panel">
-                  <div id="game-card" class="game-card-surface"></div>
-                </div>
+              <div class="game-right-top">
+                <button id="leave-game">Leave game</button>
+                <button id="autoplay-bot">Autoplay bot turns</button>
               </div>
+              <div class="game-card-panel">
+                <div id="game-card" class="game-card-surface"></div>
+              </div>
+              <div class="card">
+                <div id="game-status-pills"></div>
+              </div>
+            </div>
+            <div class="game-middle">
               <div class="board-panel">
                 <div id="track-grid" class="track-grid"></div>
               </div>
             </div>
             <div class="game-right">
-              <div class="game-right-top">
-                <button id="autoplay-bot">Autoplay bot turns</button>
-                <button id="leave-game">Leave game</button>
-              </div>
-              <div id="game-meta" class="game-meta"></div>
-              <div class="card">
-                <div id="game-status-pills"></div>
+              <div class="game-top-row">
+                <div class="game-top-primary">
+                  <button id="turn-action">Play turn</button>
+                </div>
+                <div class="game-top-turn">
+                  <div id="turn-blurb" class="turn-blurb"></div>
+                </div>
               </div>
               <div class="card">
                 <h3>Card history</h3>

@@ -43,7 +43,8 @@ body {
 }
 
 #screen-game {
-  min-height: 640px;
+  min-height: calc(100vh - 4rem);
+  max-width: 100%;
 }
 
 .hidden {
@@ -271,9 +272,8 @@ button:disabled {
 }
 
 .game-card-panel {
-  display: inline-flex;
-  justify-content: center;
-  margin-left: auto;
+  display: inline-block;
+  align-self: flex-start;
 }
 
 .game-card-surface {
@@ -402,9 +402,9 @@ button:disabled {
 
 .game-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 2.2fr) minmax(0, 0.8fr);
   gap: 1rem;
-  margin-top: 1.25rem;
+  margin-top: 0.5rem;
 }
 
 .game-left {
@@ -413,18 +413,10 @@ button:disabled {
   gap: 0.4rem;
 }
 
-.game-top-row {
-  display: grid;
-  grid-template-columns: auto auto;
-  gap: 0.75rem;
-  align-items: stretch;
-}
-
-.game-top-primary {
+.game-middle {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  align-items: flex-start;
+  gap: 0.4rem;
 }
 
 .game-right {
@@ -460,6 +452,9 @@ button:disabled {
   border-radius: 0.5rem;
   position: relative;
   z-index: 0;
+  width: 90%;
+  max-width: 100%;
+  margin: 0 auto;
 }
 
 .track-grid::before {
@@ -726,15 +721,20 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 0.4rem;
-  padding: 0.2rem 0.6rem;
+  gap: 0.35rem;
+  padding: 0.15rem 0.55rem;
   border-radius: 9999px;
   border: 1px solid #374151;
   background: #020617;
+  white-space: nowrap;
 }
 
 .status-pill-label {
   color: #9ca3af;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status-pill-value {
@@ -742,15 +742,19 @@ button:disabled {
 }
 
 .your-turn-pill {
-  padding: 0.1rem 0.5rem;
+  padding: 0.05rem 0.4rem;
   border-radius: 9999px;
   background: #16a34a;
   color: #ecfdf5;
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   font-weight: 600;
   animation: your-turn-spin 1.2s linear infinite;
+}
+
+.your-turn-pill-inactive {
+  visibility: hidden;
 }
 
 .status-pill-home {
