@@ -1,5 +1,16 @@
 (() => {
   const API_BASE = "/api/losiento";
+  const _params = new URLSearchParams(window.location.search || "");
+  const EXTERNAL_USER_ID = _params.get("x-user-id");
+  const EXTERNAL_USER_NAME = _params.get("x-user-name");
+  let USER_ID = EXTERNAL_USER_ID || window.localStorage.getItem("losiento_user");
+  if (!USER_ID) {
+    const rnd = Math.random().toString(36).slice(2);
+    const ts = Date.now().toString(36);
+    USER_ID = `ls_${ts}_${rnd}`;
+  }
+  window.localStorage.setItem("losiento_user", USER_ID);
+  const USER_NAME = EXTERNAL_USER_NAME || null;
 
   const screens = {
     loading: document.getElementById("screen-loading"),
@@ -101,10 +112,13 @@
 
   async function api(path, options = {}) {
     const resp = await fetch(`${API_BASE}${path}`, {
+      ...options,
       headers: {
         "Content-Type": "application/json",
+        "X-User-Id": USER_ID,
+        ...(USER_NAME ? { "X-User-Name": USER_NAME } : {}),
+        ...(options.headers || {}),
       },
-      ...options,
     });
     let data = null;
     try {
@@ -1990,20 +2004,9 @@
   async function handleBotStep() {
     if (!currentGame) return;
     try {
-      const resp = await fetch(`${API_BASE}/bot-step?game_id=${encodeURIComponent(currentGame.gameId)}`, {
+      const data = await api(`/bot-step?game_id=${encodeURIComponent(currentGame.gameId)}`, {
         method: "POST",
       });
-      if (!resp.ok) {
-        let msg = resp.statusText;
-        try {
-          const data = await resp.json();
-          if (data && data.detail) msg = data.detail;
-        } catch {
-          // ignore
-        }
-        throw new Error(msg);
-      }
-      const data = await resp.json();
       currentGame = data;
       renderFromGame();
     } catch (err) {
@@ -2056,23 +2059,10 @@
         return;
       }
 
-      const resp = await fetch(
-        `${API_BASE}/legal-movers?game_id=${encodeURIComponent(currentGame.gameId)}`,
+      const data = await api(
+        `/legal-movers?game_id=${encodeURIComponent(currentGame.gameId)}`,
         { method: "GET" }
       );
-      if (!resp.ok) {
-        legalMoverPawnIds = new Set();
-        selectedPawnId = null;
-        selectedSecondaryPawnId = null;
-        upcomingCard = null;
-        upcomingMoves = [];
-        selectedMoveIndex = null;
-        lastPreviewGameId = null;
-        lastPreviewTurnNumber = null;
-        lastPreviewDiscardLength = null;
-        return;
-      }
-      const data = await resp.json();
       const ids = Array.isArray(data.pawnIds) ? data.pawnIds : [];
       legalMoverPawnIds = new Set(ids);
 
