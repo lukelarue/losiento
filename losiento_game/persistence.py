@@ -395,7 +395,7 @@ class InMemoryPersistence:
             end_idx = slide_indices[-1]
             owner_seat = int(slide["owner_seat"])  # type: ignore[arg-type]
             is_near_safety = bool(slide["is_near_safety"])  # type: ignore[arg-type]
-            if forward and is_near_safety and owner_seat == pawn.seat_index:
+            if is_near_safety and owner_seat == pawn.seat_index:
                 # Slide into the owner's Safety Zone
                 return PawnPosition(kind="safety", index=0), slide_indices
             # Normal slide: end on the last slide square

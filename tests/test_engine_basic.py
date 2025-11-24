@@ -199,6 +199,33 @@ class EngineBasicTests(unittest.TestCase):
         moves12 = get_legal_moves(state2, seat_index=0, card="12")
         self.assertFalse(moves12, "card 12 from the same position should overshoot home and be illegal")
 
+    def test_backward_4_from_safety_onto_own_near_safety_slide_enters_safety(self) -> None:
+        state, _, _ = self._make_basic_state()
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawn = pawns0[0]
+
+        # Place the pawn in its Safety Zone at index 2. A backward-4 move from
+        # here should step out to the main track, land exactly on the start of
+        # seat 0's first slide (the near-safety slide), and, per the
+        # slide-into-safety house rule, end in Safety Zone index 0 instead of
+        # at the far end of the slide.
+        pawn.position = PawnPosition(kind="safety", index=2)
+
+        moves = get_legal_moves(state, seat_index=0, card="4")
+        back_moves = [
+            m
+            for m in moves
+            if m.pawn_id == pawn.pawn_id and m.direction == "backward" and m.steps == 4
+        ]
+        self.assertTrue(back_moves, "expected a backward-4 move from safety index 2")
+
+        new_state = apply_move(state, back_moves[0])
+        pawn_new = next(p for p in new_state.pawns if p.pawn_id == pawn.pawn_id)
+
+        self.assertEqual(pawn_new.position.kind, "safety")
+        self.assertEqual(pawn_new.position.index, 0)
+
     def test_slide_on_other_color_still_applies_and_bumps(self) -> None:
         state, _, _ = self._make_basic_state()
 

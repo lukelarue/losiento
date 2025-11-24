@@ -82,6 +82,11 @@ On a player’s turn:
 - **House rule:** If a pawn lands on the start of such a slide and the slide would normally end on the space immediately before that player’s Safety Zone, the pawn:
   1. Slides along the slide as usual, then
   2. Continues into the first square of that player’s **Safety Zone**.
+  - This applies whenever the pawn *lands* on the start of its own near-safety
+    slide, whether it moved **forward** along the outer track or **backward out
+    of its Safety Zone** (for example, with a 4 card). In all of these cases,
+    the final destination is Safety Zone space 1, not the far end of the slide
+    on the outer track.
 
 ### 5.5 Safety Zones
 
