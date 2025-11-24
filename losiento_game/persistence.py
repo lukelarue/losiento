@@ -173,6 +173,8 @@ class InMemoryPersistence:
                         status="bot",
                     )
                 )
+        rnd = __import__("random")
+        deck_seed = rnd.randint(0, 2**31 - 1)
         doc: Dict[str, Any] = {
             "game_id": game_id,
             "host_id": user_id,
@@ -180,7 +182,7 @@ class InMemoryPersistence:
             "created_at": created,
             "updated_at": created,
             "phase": "lobby",
-            "settings": GameSettings(max_seats=max_seats),
+            "settings": GameSettings(max_seats=max_seats, deck_seed=deck_seed),
             "seats": seats,
             "state": None,
         }
@@ -1002,6 +1004,9 @@ class FirestorePersistence:
 
         self._ensure_user_free(user_id)
 
+        rnd = __import__("random")
+        deck_seed = rnd.randint(0, 2**31 - 1)
+
         if max_seats < 2 or max_seats > 4:
             raise ValueError("invalid_max_seats")
 
@@ -1042,7 +1047,7 @@ class FirestorePersistence:
             "phase": "lobby",
             "settings": {
                 "maxSeats": max_seats,
-                "deckSeed": None,
+                "deckSeed": deck_seed,
             },
             "seats": seats,
             "state": None,

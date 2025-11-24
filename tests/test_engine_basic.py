@@ -1,4 +1,5 @@
 import unittest
+import copy
 
 from losiento_game.engine import (
     build_deck,
@@ -523,6 +524,34 @@ class PersistenceInMemoryTests(unittest.TestCase):
             seats[1].status = "bot"
         persistence.start_game(game_id, "u0")
         return persistence, game_id
+
+    def test_deck_rebuild_preview_and_play_draw_same_card_with_seed(self) -> None:
+        # When the deck is exhausted and rebuilt using a fixed deck_seed,
+        # drawing a card from a copied GameState (preview) and from the
+        # authoritative state (play) should yield the same next card.
+        persistence, game_id = self._make_started_game()
+        game = persistence.games[game_id]
+        state = game["state"]
+
+        # Exhaust the deck and clear discard so that _ensure_deck will rebuild.
+        state.deck = []
+        state.discard_pile = []
+
+        # Use a fixed seed so behaviour is deterministic for the test.
+        state.settings.deck_seed = 98765
+
+        tmp_state = copy.deepcopy(state)
+
+        # Simulate preview_legal_movers drawing on a copied state and then
+        # play_move drawing on the authoritative state.
+        preview_card = persistence._draw_card(tmp_state)
+        play_card = persistence._draw_card(state)
+
+        self.assertEqual(
+            preview_card,
+            play_card,
+            "preview and play should see the same next card when rebuilding deck with a fixed seed",
+        )
 
     def test_card2_play_move_draws_one_card_and_keeps_turn(self) -> None:
         persistence, game_id = self._make_started_game()
