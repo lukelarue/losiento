@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+import logging
 import os
 import uuid
 import copy
@@ -923,66 +924,73 @@ class FirestorePersistence:
         state_before/state_after are the inner "state" dicts produced by
         game_state_to_dict(state)["state"].
         """
+        try:
+            moves_ref = game_ref.collection("moves")
 
-        moves_ref = game_ref.collection("moves")
+            # Compute sequential index for this move. When a transaction is
+            # provided, use a transactional query so that index assignment is
+            # consistent under concurrent writers.
+            if transaction is not None and firestore is not None:
+                index = 0
+                query = moves_ref.order_by("index", direction=firestore.Query.DESCENDING).limit(1)
+                docs = list(transaction.get(query))
+                if docs:
+                    last = docs[0].to_dict() or {}
+                    last_index = last.get("index")
+                    if isinstance(last_index, int):
+                        index = last_index + 1
+                move_doc_ref = moves_ref.document()
+            else:
+                index = 0
+                for _ in moves_ref.stream():
+                    index += 1
+                move_doc_ref = moves_ref.document()
 
-        # Compute sequential index for this move. When a transaction is
-        # provided, use a transactional query so that index assignment is
-        # consistent under concurrent writers.
-        if transaction is not None and firestore is not None:
-            index = 0
-            query = moves_ref.order_by("index", direction=firestore.Query.DESCENDING).limit(1)
-            docs = list(transaction.get(query))
-            if docs:
-                last = docs[0].to_dict() or {}
-                last_index = last.get("index")
-                if isinstance(last_index, int):
-                    index = last_index + 1
-            move_doc_ref = moves_ref.document()
-        else:
-            index = 0
-            for _ in moves_ref.stream():
-                index += 1
-            move_doc_ref = moves_ref.document()
+            before_pawns = (state_before.get("board") or {}).get("pawns") or []
+            after_pawns = (state_after.get("board") or {}).get("pawns") or []
 
-        before_pawns = (state_before.get("board") or {}).get("pawns") or []
-        after_pawns = (state_after.get("board") or {}).get("pawns") or []
+            before_by_id: Dict[str, Any] = {
+                str(p.get("pawnId")): p.get("position") for p in before_pawns
+            }
+            after_by_id: Dict[str, Any] = {
+                str(p.get("pawnId")): p.get("position") for p in after_pawns
+            }
 
-        before_by_id: Dict[str, Any] = {
-            str(p.get("pawnId")): p.get("position") for p in before_pawns
-        }
-        after_by_id: Dict[str, Any] = {
-            str(p.get("pawnId")): p.get("position") for p in after_pawns
-        }
+            changed_pawns: List[Dict[str, Any]] = []
+            for pawn_id, after_pos in after_by_id.items():
+                before_pos = before_by_id.get(pawn_id)
+                if before_pos != after_pos:
+                    changed_pawns.append(
+                        {
+                            "pawnId": pawn_id,
+                            "fromPosition": before_pos,
+                            "toPosition": after_pos,
+                        }
+                    )
 
-        changed_pawns: List[Dict[str, Any]] = []
-        for pawn_id, after_pos in after_by_id.items():
-            before_pos = before_by_id.get(pawn_id)
-            if before_pos != after_pos:
-                changed_pawns.append(
-                    {
-                        "pawnId": pawn_id,
-                        "fromPosition": before_pos,
-                        "toPosition": after_pos,
-                    }
-                )
+            resulting_state_hash = hash(repr(state_after))
 
-        resulting_state_hash = hash(repr(state_after))
+            payload = {
+                "index": index,
+                "seatIndex": seat_index,
+                "playerId": player_id,
+                "card": card,
+                "moveData": {"pawns": changed_pawns},
+                "resultingStateHash": str(resulting_state_hash),
+                "createdAt": _now(),
+            }
 
-        payload = {
-            "index": index,
-            "seatIndex": seat_index,
-            "playerId": player_id,
-            "card": card,
-            "moveData": {"pawns": changed_pawns},
-            "resultingStateHash": str(resulting_state_hash),
-            "createdAt": _now(),
-        }
-
-        if transaction is not None:
-            transaction.set(move_doc_ref, payload)
-        else:
-            move_doc_ref.set(payload)
+            if transaction is not None:
+                transaction.set(move_doc_ref, payload)
+            else:
+                move_doc_ref.set(payload)
+        except Exception:
+            logging.getLogger("uvicorn.error").exception(
+                "[losiento] Failed to log move document game_id=%s seat_index=%s card=%s",
+                game_id,
+                seat_index,
+                card,
+            )
 
     def host_game(self, user_id: str, max_seats: int, display_name: Optional[str]) -> Dict[str, Any]:
         """Create a lobby game document and mark user as active in losiento_users.
