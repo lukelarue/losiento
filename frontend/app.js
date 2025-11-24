@@ -550,10 +550,11 @@
     const lastCard = discard.length ? discard[discard.length - 1] : null;
 
     if (lastCard && lastCard !== lastShownCard) {
-      const desc = getCardDescription(lastCard);
-      if (desc) {
-        showToast(desc, 3000);
+      let label = String(lastCard);
+      if (label === "Sorry!") {
+        label = "¡Lo siento!";
       }
+      showToast(`Card drawn: ${label}`, 3000);
       lastShownCard = lastCard;
     }
 
@@ -577,7 +578,30 @@
       historyInitialized = true;
     } else {
       if (discard.length < lastHistoryDiscardLength) {
-        cardHistory = [];
+        const prevSeatIndex =
+          lastHistorySeatIndex != null ? lastHistorySeatIndex : state.currentSeatIndex;
+        const resetCards = discard.slice();
+        let attachedPendingSummary = false;
+        resetCards.forEach((card) => {
+          const entry = { card, seatIndex: prevSeatIndex, expanded: false };
+          if (
+            !attachedPendingSummary &&
+            pendingHistoryDetails &&
+            pendingHistoryDetails.seatIndex === prevSeatIndex &&
+            typeof pendingHistoryDetails.summary === "string" &&
+            pendingHistoryDetails.summary
+          ) {
+            entry.moveSummary = pendingHistoryDetails.summary;
+            attachedPendingSummary = true;
+          }
+          cardHistory.push(entry);
+          if (cardHistory.length > 10) {
+            cardHistory = cardHistory.slice(cardHistory.length - 10);
+          }
+        });
+        if (attachedPendingSummary) {
+          pendingHistoryDetails = null;
+        }
         lastHistoryDiscardLength = discard.length;
         lastHistorySeatIndex = state.currentSeatIndex;
       } else if (discard.length > lastHistoryDiscardLength) {
@@ -1057,8 +1081,8 @@
           }
 
           // For cards 7, 10, and 11, when a pawn is selected, highlight any
-          // track tiles that are primary destinations for that pawn and allow
-          // clicking the tile to choose the corresponding move.
+          // track tiles that are destinations for that pawn and allow clicking
+          // the tile to choose the corresponding move.
           if (
             selectedPawnId &&
             (upcomingCard === "7" || upcomingCard === "10" || upcomingCard === "11")
@@ -1068,8 +1092,9 @@
 
             if (upcomingCard === "7") {
               if (selectedSecondaryPawnId) {
-                // Split-7: require both primary and secondary pawn to match so
-                // the highlighted destinations correspond to the chosen pair.
+                // Split-7 with an explicit pair: only consider moves whose
+                // primary/secondary pawns match the chosen pair, and where
+                // either pawn lands on this track index.
                 matchingMoves = movesArray.filter(
                   (m) =>
                     m.card === "7" &&
@@ -1085,19 +1110,25 @@
                         m.secondaryDestIndex === idx))
                 );
               } else {
-                // Single-7: only consider moves where this pawn alone moves 7
-                // spaces (no secondary pawn).
+                // 7 with a single pawn selected: highlight all legal 7 moves
+                // that involve this pawn, whether they are single-7 moves or
+                // 7-split moves with any partner, as long as this track index
+                // is the landing spot for the selected pawn.
                 matchingMoves = movesArray.filter(
                   (m) =>
                     m.card === "7" &&
-                    m.pawnId === selectedPawnId &&
-                    !m.secondaryPawnId &&
-                    m.destType === "track" &&
-                    typeof m.destIndex === "number" &&
-                    m.destIndex === idx
+                    ((m.pawnId === selectedPawnId &&
+                      m.destType === "track" &&
+                      typeof m.destIndex === "number" &&
+                      m.destIndex === idx) ||
+                      (m.secondaryPawnId === selectedPawnId &&
+                        m.secondaryDestType === "track" &&
+                        typeof m.secondaryDestIndex === "number" &&
+                        m.secondaryDestIndex === idx))
                 );
               }
             } else {
+              // Cards 10 and 11: highlight simple forward/track destinations.
               matchingMoves = movesArray.filter(
                 (m) =>
                   m.pawnId === selectedPawnId &&
@@ -1115,6 +1146,8 @@
 
                 if (upcomingCard === "7") {
                   if (selectedSecondaryPawnId) {
+                    // Explicit 7-split pair: only use moves for that pair and
+                    // this track destination (for either pawn).
                     candidates = movesNow.filter(
                       (m) =>
                         m.card === "7" &&
@@ -1130,14 +1163,20 @@
                             m.secondaryDestIndex === idx))
                     );
                   } else {
+                    // Single pawn selected: allow both single-7 and split-7
+                    // moves involving this pawn where this track index is the
+                    // landing square for the selected pawn.
                     candidates = movesNow.filter(
                       (m) =>
                         m.card === "7" &&
-                        m.pawnId === selectedPawnId &&
-                        !m.secondaryPawnId &&
-                        m.destType === "track" &&
-                        typeof m.destIndex === "number" &&
-                        m.destIndex === idx
+                        ((m.pawnId === selectedPawnId &&
+                          m.destType === "track" &&
+                          typeof m.destIndex === "number" &&
+                          m.destIndex === idx) ||
+                          (m.secondaryPawnId === selectedPawnId &&
+                            m.secondaryDestType === "track" &&
+                            typeof m.secondaryDestIndex === "number" &&
+                            m.secondaryDestIndex === idx))
                     );
                   }
                 } else {
@@ -1156,7 +1195,8 @@
                   const currentIdx = candidates.findIndex(
                     (m) => m.index === selectedMoveIndex
                   );
-                  const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
+                  const nextIdx =
+                    currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
                   chosen = candidates[nextIdx];
                 } else {
                   chosen = candidates[0];
@@ -1192,10 +1232,13 @@
             matchingHomeMoves = movesArray.filter(
               (m) =>
                 m.card === "7" &&
-                m.pawnId === selectedPawnId &&
-                !m.secondaryPawnId &&
-                m.destType === "home" &&
-                pawnSeatById.get(m.pawnId) === homeSeatIndex
+                ((m.pawnId === selectedPawnId &&
+                  m.destType === "home" &&
+                  pawnSeatById.get(m.pawnId) === homeSeatIndex) ||
+                  (m.secondaryPawnId === selectedPawnId &&
+                    m.secondaryDestType === "home" &&
+                    m.secondaryPawnId &&
+                    pawnSeatById.get(m.secondaryPawnId) === homeSeatIndex))
             );
           }
 
@@ -1224,10 +1267,13 @@
                 candidates = movesNow.filter(
                   (m) =>
                     m.card === "7" &&
-                    m.pawnId === selectedPawnId &&
-                    !m.secondaryPawnId &&
-                    m.destType === "home" &&
-                    pawnSeatById.get(m.pawnId) === homeSeatIndexNow
+                    ((m.pawnId === selectedPawnId &&
+                      m.destType === "home" &&
+                      pawnSeatById.get(m.pawnId) === homeSeatIndexNow) ||
+                      (m.secondaryPawnId === selectedPawnId &&
+                        m.secondaryDestType === "home" &&
+                        m.secondaryPawnId &&
+                        pawnSeatById.get(m.secondaryPawnId) === homeSeatIndexNow))
                 );
               }
 
@@ -1280,12 +1326,17 @@
             matchingSafetyMoves = movesArray.filter(
               (m) =>
                 m.card === "7" &&
-                m.pawnId === selectedPawnId &&
-                !m.secondaryPawnId &&
-                m.destType === "safety" &&
-                pawnSeatById.get(m.pawnId) === safetySeatIndex &&
-                typeof m.destIndex === "number" &&
-                m.destIndex === safetyIndex
+                ((m.pawnId === selectedPawnId &&
+                  m.destType === "safety" &&
+                  pawnSeatById.get(m.pawnId) === safetySeatIndex &&
+                  typeof m.destIndex === "number" &&
+                  m.destIndex === safetyIndex) ||
+                  (m.secondaryPawnId === selectedPawnId &&
+                    m.secondaryDestType === "safety" &&
+                    m.secondaryPawnId &&
+                    pawnSeatById.get(m.secondaryPawnId) === safetySeatIndex &&
+                    typeof m.secondaryDestIndex === "number" &&
+                    m.secondaryDestIndex === safetyIndex))
             );
           }
 
@@ -1319,12 +1370,17 @@
                 candidates = movesNow.filter(
                   (m) =>
                     m.card === "7" &&
-                    m.pawnId === selectedPawnId &&
-                    !m.secondaryPawnId &&
-                    m.destType === "safety" &&
-                    pawnSeatById.get(m.pawnId) === safetySeatIndexNow &&
-                    typeof m.destIndex === "number" &&
-                    m.destIndex === safetyIndexNow
+                    ((m.pawnId === selectedPawnId &&
+                      m.destType === "safety" &&
+                      pawnSeatById.get(m.pawnId) === safetySeatIndexNow &&
+                      typeof m.destIndex === "number" &&
+                      m.destIndex === safetyIndexNow) ||
+                      (m.secondaryPawnId === selectedPawnId &&
+                        m.secondaryDestType === "safety" &&
+                        m.secondaryPawnId &&
+                        pawnSeatById.get(m.secondaryPawnId) === safetySeatIndexNow &&
+                        typeof m.secondaryDestIndex === "number" &&
+                        m.secondaryDestIndex === safetyIndexNow))
                 );
               }
 
@@ -1487,10 +1543,16 @@
                 return;
               }
 
-              // Card 7: first click selects the primary pawn, second click
-              // selects a secondary pawn (if a split-7 move exists between
-              // them). After two pawns are chosen, click a highlighted
-              // destination tile to pick the exact split.
+              // Card 7 UI behavior:
+              // - You may select one or two of your own pawns.
+              // - With a single pawn selected, all legal 7 moves that involve
+              //   that pawn (single-7 or split-7 with any partner) are
+              //   highlighted; clicking a highlighted destination tile chooses
+              //   the full move, including any implied second pawn.
+              // - With two pawns selected, only split-7 moves that use that
+              //   exact pair are highlighted; clicking a destination tile
+              //   cycles between alternative splits for that tile when more
+              //   than one exists.
               if (upcomingCard === "7") {
                 if (!selectedPawnId) {
                   selectedPawnId = pawnId;
