@@ -964,32 +964,9 @@
           : null;
 
       if (selectedMove.destType === "track" && typeof selectedMove.destIndex === "number") {
-        const rawIdx = selectedMove.destIndex;
-
-        // Decide whether to visualize the pre-slide landing (slide start) or the
-        // actual final square:
-        // - Sorry! always lands directly on the opponent pawn's square.
-        // - 11 switch swaps positions with a target pawn; no slide is involved.
-        // - 1/2 leaving Start go to the special start-exit tile at the end of the
-        //   first slide, not through a slide.
-        const cardForSelected = upcomingCard || displayCard || null;
-        const isSorryCard = cardForSelected === "Sorry!";
-        const isSwitch11 =
-          cardForSelected === "11" &&
-          !!(selectedMove && selectedMove.targetPawnId);
-        const isOwnStartExit =
-          seatIndexForSelected != null &&
-          startExitSeatByIndex.get(rawIdx) === seatIndexForSelected;
-
-        const shouldUseSlideStart =
-          !isSorryCard && !isSwitch11 && !isOwnStartExit && slideEndToStart.has(rawIdx);
-
-        if (shouldUseSlideStart) {
-          const slideStartIdx = slideEndToStart.get(rawIdx);
-          selectedDestTrackIndex = slideStartIdx != null ? slideStartIdx : rawIdx;
-        } else {
-          selectedDestTrackIndex = rawIdx;
-        }
+        // Always highlight the actual final track square where the pawn ends,
+        // including after any slide effects.
+        selectedDestTrackIndex = selectedMove.destIndex;
       } else if (
         selectedMove.destType === "safety" &&
         typeof selectedMove.destIndex === "number" &&
@@ -1155,76 +1132,45 @@
                 // Split-7 with an explicit pair: only consider moves whose
                 // primary/secondary pawns match the chosen pair, and where
                 // either pawn lands on this track index.
-                matchingMoves = movesArray.filter((m) => {
-                  const pairMatches =
-                    (m.pawnId === selectedPawnId &&
+                matchingMoves = movesArray.filter(
+                  (m) =>
+                    ((m.pawnId === selectedPawnId &&
                       m.secondaryPawnId === selectedSecondaryPawnId) ||
-                    (m.pawnId === selectedSecondaryPawnId &&
-                      m.secondaryPawnId === selectedPawnId);
-                  if (!pairMatches) return false;
-
-                  let primaryIdx = null;
-                  if (m.destType === "track" && typeof m.destIndex === "number") {
-                    const slideStartIdx = slideEndToStart.get(m.destIndex);
-                    primaryIdx = slideStartIdx != null ? slideStartIdx : m.destIndex;
-                  }
-
-                  let secondaryIdx = null;
-                  if (
-                    m.secondaryDestType === "track" &&
-                    typeof m.secondaryDestIndex === "number"
-                  ) {
-                    const slideStartIdx = slideEndToStart.get(m.secondaryDestIndex);
-                    secondaryIdx =
-                      slideStartIdx != null ? slideStartIdx : m.secondaryDestIndex;
-                  }
-
-                  return primaryIdx === idx || secondaryIdx === idx;
-                });
+                      (m.pawnId === selectedSecondaryPawnId &&
+                        m.secondaryPawnId === selectedPawnId)) &&
+                    ((m.destType === "track" &&
+                      typeof m.destIndex === "number" &&
+                      m.destIndex === idx) ||
+                      (m.secondaryDestType === "track" &&
+                        typeof m.secondaryDestIndex === "number" &&
+                        m.secondaryDestIndex === idx))
+                );
               } else {
                 // 7 with a single pawn selected: highlight all legal 7 moves
                 // that involve this pawn, whether they are single-7 moves or
                 // 7-split moves with any partner, as long as this track index
                 // is the landing spot for the selected pawn.
-                matchingMoves = movesArray.filter((m) => {
-                  let primaryIdx = null;
-                  if (
-                    m.pawnId === selectedPawnId &&
-                    m.destType === "track" &&
-                    typeof m.destIndex === "number"
-                  ) {
-                    const slideStartIdx = slideEndToStart.get(m.destIndex);
-                    primaryIdx = slideStartIdx != null ? slideStartIdx : m.destIndex;
-                  }
-
-                  let secondaryIdx = null;
-                  if (
-                    m.secondaryPawnId === selectedPawnId &&
-                    m.secondaryDestType === "track" &&
-                    typeof m.secondaryDestIndex === "number"
-                  ) {
-                    const slideStartIdx = slideEndToStart.get(m.secondaryDestIndex);
-                    secondaryIdx =
-                      slideStartIdx != null ? slideStartIdx : m.secondaryDestIndex;
-                  }
-
-                  return primaryIdx === idx || secondaryIdx === idx;
-                });
+                matchingMoves = movesArray.filter(
+                  (m) =>
+                    (m.pawnId === selectedPawnId &&
+                      m.destType === "track" &&
+                      typeof m.destIndex === "number" &&
+                      m.destIndex === idx) ||
+                    (m.secondaryPawnId === selectedPawnId &&
+                      m.secondaryDestType === "track" &&
+                      typeof m.secondaryDestIndex === "number" &&
+                      m.secondaryDestIndex === idx)
+                );
               }
             } else {
               // Cards 10 and 11: highlight simple forward/track destinations.
-              matchingMoves = movesArray.filter((m) => {
-                if (
-                  m.pawnId !== selectedPawnId ||
-                  m.destType !== "track" ||
-                  typeof m.destIndex !== "number"
-                ) {
-                  return false;
-                }
-                const slideStartIdx = slideEndToStart.get(m.destIndex);
-                const visualIdx = slideStartIdx != null ? slideStartIdx : m.destIndex;
-                return visualIdx === idx;
-              });
+              matchingMoves = movesArray.filter(
+                (m) =>
+                  m.pawnId === selectedPawnId &&
+                  m.destType === "track" &&
+                  typeof m.destIndex === "number" &&
+                  m.destIndex === idx
+              );
             }
 
             if (matchingMoves.length > 0) {
@@ -1237,84 +1183,43 @@
                   if (selectedSecondaryPawnId) {
                     // Explicit 7-split pair: only use moves for that pair and
                     // this track destination (for either pawn).
-                    candidates = movesNow.filter((m) => {
-                      const pairMatches =
-                        (m.pawnId === selectedPawnId &&
+                    candidates = movesNow.filter(
+                      (m) =>
+                        ((m.pawnId === selectedPawnId &&
                           m.secondaryPawnId === selectedSecondaryPawnId) ||
-                        (m.pawnId === selectedSecondaryPawnId &&
-                          m.secondaryPawnId === selectedPawnId);
-                      if (!pairMatches) return false;
-
-                      let primaryIdx = null;
-                      if (
-                        m.destType === "track" &&
-                        typeof m.destIndex === "number"
-                      ) {
-                        const slideStartIdx = slideEndToStart.get(m.destIndex);
-                        primaryIdx =
-                          slideStartIdx != null ? slideStartIdx : m.destIndex;
-                      }
-
-                      let secondaryIdx = null;
-                      if (
-                        m.secondaryDestType === "track" &&
-                        typeof m.secondaryDestIndex === "number"
-                      ) {
-                        const slideStartIdx = slideEndToStart.get(m.secondaryDestIndex);
-                        secondaryIdx =
-                          slideStartIdx != null
-                            ? slideStartIdx
-                            : m.secondaryDestIndex;
-                      }
-
-                      return primaryIdx === idx || secondaryIdx === idx;
-                    });
+                          (m.pawnId === selectedSecondaryPawnId &&
+                            m.secondaryPawnId === selectedPawnId)) &&
+                        ((m.destType === "track" &&
+                          typeof m.destIndex === "number" &&
+                          m.destIndex === idx) ||
+                          (m.secondaryDestType === "track" &&
+                            typeof m.secondaryDestIndex === "number" &&
+                            m.secondaryDestIndex === idx))
+                    );
                   } else {
                     // Single pawn selected: allow both single-7 and split-7
                     // moves involving this pawn where this track index is the
                     // landing square for the selected pawn.
-                    candidates = movesNow.filter((m) => {
-                      let primaryIdx = null;
-                      if (
-                        m.pawnId === selectedPawnId &&
-                        m.destType === "track" &&
-                        typeof m.destIndex === "number"
-                      ) {
-                        const slideStartIdx = slideEndToStart.get(m.destIndex);
-                        primaryIdx =
-                          slideStartIdx != null ? slideStartIdx : m.destIndex;
-                      }
-
-                      let secondaryIdx = null;
-                      if (
-                        m.secondaryPawnId === selectedPawnId &&
-                        m.secondaryDestType === "track" &&
-                        typeof m.secondaryDestIndex === "number"
-                      ) {
-                        const slideStartIdx = slideEndToStart.get(m.secondaryDestIndex);
-                        secondaryIdx =
-                          slideStartIdx != null
-                            ? slideStartIdx
-                            : m.secondaryDestIndex;
-                      }
-
-                      return primaryIdx === idx || secondaryIdx === idx;
-                    });
+                    candidates = movesNow.filter(
+                      (m) =>
+                        (m.pawnId === selectedPawnId &&
+                          m.destType === "track" &&
+                          typeof m.destIndex === "number" &&
+                          m.destIndex === idx) ||
+                        (m.secondaryPawnId === selectedPawnId &&
+                          m.secondaryDestType === "track" &&
+                          typeof m.secondaryDestIndex === "number" &&
+                          m.secondaryDestIndex === idx)
+                    );
                   }
                 } else {
-                  candidates = movesNow.filter((m) => {
-                    if (
-                      m.pawnId !== selectedPawnId ||
-                      m.destType !== "track" ||
-                      typeof m.destIndex !== "number"
-                    ) {
-                      return false;
-                    }
-                    const slideStartIdx = slideEndToStart.get(m.destIndex);
-                    const visualIdx =
-                      slideStartIdx != null ? slideStartIdx : m.destIndex;
-                    return visualIdx === idx;
-                  });
+                  candidates = movesNow.filter(
+                    (m) =>
+                      m.pawnId === selectedPawnId &&
+                      m.destType === "track" &&
+                      typeof m.destIndex === "number" &&
+                      m.destIndex === idx
+                  );
                 }
 
                 if (!candidates.length) return;
