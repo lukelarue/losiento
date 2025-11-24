@@ -1448,7 +1448,7 @@ class FirestorePersistence:
             user_id: str,
             payload: Dict[str, Any],
         ) -> Dict[str, Any]:
-            snap = transaction.get(game_ref)
+            snap = game_ref.get(transaction=transaction)
             if not snap.exists:
                 raise ValueError("game_not_found")
 
@@ -1543,7 +1543,7 @@ class FirestorePersistence:
 
         @firestore.transactional
         def _bot_step_txn(transaction: Any, game_ref: Any, game_id: str) -> Dict[str, Any]:
-            snap = transaction.get(game_ref)
+            snap = game_ref.get(transaction=transaction)
             if not snap.exists:
                 raise ValueError("game_not_found")
 
