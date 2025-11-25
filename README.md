@@ -10,7 +10,7 @@ This project mirrors the overall structure and deployment approach of the Minesw
   - Implements the Lo Siento/Sorry! rules from `rules.md`:
     - 4 pawns per player, Start / Safety / Home zones.
     - 1/2/Sorry! to leave Start, exact count to enter Home.
-    - Slides (including cross-color slides and slide-into-safety behavior).
+    - Slides (no sliding on your own color).
     - Safety Zone rules and self-bump prohibition.
     - Card behaviors including 2 (extra draw), 7 (split), 10 (forward/backward), 11 (switch), and Sorry! (target/bump + slides).
   - Exposes `get_legal_moves` and `apply_move` with a `Move` structure that encodes both simple and complex moves (7-split, 11-switch, Sorry!).

@@ -68,25 +68,13 @@ On a player’s turn:
   - If the only way to complete a legal move would result in landing on a space occupied by one of their own pawns, that move is not allowed.
   - If no other legal move exists, the player’s turn is forfeited.
 
-### 5.4 Slides (with house rules)
+### 5.4 Slides
 
 - Certain board spaces are the **start of a slide**.
 - If a pawn **lands exactly on the start of a slide**, it immediately slides forward to the last square of that slide.
-- **House rule:** In Lo Siento, you may slide on **any color**, including your own.
-- As the pawn slides:
-  - All pawns on any space of the slide (including the sliding player’s own pawns) are sent back to their respective Starts.
-
-#### Sliding into the Safety Zone (house rule)
-
-- Some slides end on the square directly outside a player’s Safety Zone.
-- **House rule:** If a pawn lands on the start of such a slide and the slide would normally end on the space immediately before that player’s Safety Zone, the pawn:
-  1. Slides along the slide as usual, then
-  2. Continues into the first square of that player’s **Safety Zone**.
-  - This applies whenever the pawn *lands* on the start of its own near-safety
-    slide, whether it moved **forward** along the outer track or **backward out
-    of its Safety Zone** (for example, with a 4 card). In all of these cases,
-    the final destination is Safety Zone space 1, not the far end of the slide
-    on the outer track.
+- **You cannot slide on your own color slide.** If a pawn lands on its own color's slide start, it simply stays on that square and does not slide.
+- As the pawn slides on an opponent's slide:
+  - All pawns on any space of the slide (including the sliding player's own pawns) are sent back to their respective Starts.
 
 ### 5.5 Safety Zones
 

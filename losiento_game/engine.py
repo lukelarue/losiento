@@ -72,7 +72,7 @@ def build_slides() -> Dict[int, Dict[str, object]]:
     """Construct a mapping from slide start index -> slide metadata.
 
     Each slide record contains:
-      - owner_seat: seat index that "owns" the segment (for slide-into-safety rule)
+      - owner_seat: seat index that "owns" the segment (pawns cannot slide on their own color)
       - indices: ordered list of track indices along the slide (including start)
       - is_near_safety: True only for the first slide of each color
     """
@@ -135,12 +135,14 @@ def _apply_slides_and_safety(
     slide = SLIDES.get(track_index)
     slide_indices: Optional[List[int]] = None
     if slide is not None:
+        owner_seat = int(slide["owner_seat"])  # type: ignore[arg-type]
+        # Per Sorry! rules: you cannot slide on your own color slide.
+        # If landing on own slide, stay on that track index without sliding.
+        if owner_seat == pawn.seat_index:
+            return PawnPosition(kind="track", index=track_index), None
+        # Opponent's slide: slide to the end and bump pawns along the way.
         slide_indices = list(slide["indices"])  # type: ignore[assignment]
         end_idx = slide_indices[-1]
-        owner_seat = int(slide["owner_seat"])  # type: ignore[arg-type]
-        is_near_safety = bool(slide["is_near_safety"])  # type: ignore[arg-type]
-        if is_near_safety and owner_seat == pawn.seat_index:
-            return PawnPosition(kind="safety", index=0), slide_indices
         track_index = end_idx
 
     return PawnPosition(kind="track", index=track_index), slide_indices

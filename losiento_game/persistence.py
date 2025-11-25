@@ -79,23 +79,123 @@ def _select_move(moves: List[Move], payload: Dict[str, Any]) -> Move:
     raise ValueError("invalid_move_selection")
 
 
+def _compute_logical_destination(
+    pawn: Pawn,
+    direction: Optional[str],
+    steps: Optional[int],
+) -> tuple[str, Optional[int]] | None:
+    """Compute the logical destination for a pawn based on direction/steps, WITHOUT applying slides.
+
+    This returns where the pawn would land based purely on the step count, before any
+    slide effects are applied. Used to show the player where they are choosing to move,
+    separate from where they actually end up after sliding.
+    """
+    if direction is None or steps is None:
+        return None
+
+    pos = pawn.position
+    seat_index = pawn.seat_index
+
+    if pos.kind == "home":
+        return None
+
+    if pos.kind == "start":
+        # Leaving start: land on the end of your first slide (start exit space)
+        fs = first_slide_indices(seat_index)
+        return ("track", fs[-1])
+
+    if pos.kind == "track":
+        cur = pos.index or 0
+        if direction == "forward":
+            entry_idx = safe_entry_index(seat_index)
+            dist_to_entry = (entry_idx - cur) % TRACK_LEN
+            if steps <= dist_to_entry:
+                track_index = (cur + steps) % TRACK_LEN
+                return ("track", track_index)
+            else:
+                steps_into_safety = steps - dist_to_entry
+                remaining_in_safety = steps_into_safety - 1
+                if remaining_in_safety < 0:
+                    return None
+                if remaining_in_safety < SAFE_ZONE_LEN:
+                    return ("safety", remaining_in_safety)
+                elif remaining_in_safety == SAFE_ZONE_LEN:
+                    return ("home", None)
+                else:
+                    return None
+        elif direction == "backward":
+            track_index = (cur - steps) % TRACK_LEN
+            return ("track", track_index)
+
+    if pos.kind == "safety":
+        cur = pos.index or 0
+        if direction == "forward":
+            new_index = cur + steps
+            if new_index < SAFE_ZONE_LEN:
+                return ("safety", new_index)
+            elif new_index == SAFE_ZONE_LEN:
+                return ("home", None)
+            else:
+                return None
+        elif direction == "backward":
+            new_index = cur - steps
+            if new_index >= 0:
+                return ("safety", new_index)
+            else:
+                # Moving back out of safety zone onto track
+                remaining = steps - (cur + 1)
+                from_entry = safe_entry_index(seat_index)
+                track_index = (from_entry - remaining) % TRACK_LEN
+                return ("track", track_index)
+
+    return None
+
+
 def _compute_move_destinations(
     state: GameState,
     move: Move,
-) -> tuple[tuple[str, Optional[int]] | None, tuple[str, Optional[int]] | None]:
+) -> tuple[
+    tuple[str, Optional[int]] | None,  # primary final dest
+    tuple[str, Optional[int]] | None,  # secondary final dest
+    tuple[str, Optional[int]] | None,  # primary logical dest (pre-slide)
+    tuple[str, Optional[int]] | None,  # secondary logical dest (pre-slide)
+]:
     """Simulate a single legal move and return final positions for primary/secondary pawns.
+
+    Returns a 4-tuple:
+    - primary_dest: final position of primary pawn (after slides)
+    - secondary_dest: final position of secondary pawn (after slides)
+    - primary_logical: logical destination of primary pawn (before slides)
+    - secondary_logical: logical destination of secondary pawn (before slides)
 
     This helper is used only for advisory UI data in preview_legal_movers and never mutates
     the caller's GameState. It is safe but potentially a bit expensive; callers should
     reserve it for small move lists such as per-turn legal moves.
     """
 
+    # First compute logical destinations (pre-slide) from the original state
+    primary_pawn = next(
+        (p for p in state.pawns if p.pawn_id == move.pawn_id and p.seat_index == move.seat_index),
+        None,
+    )
+    primary_logical = _compute_logical_destination(primary_pawn, move.direction, move.steps) if primary_pawn else None
+
+    secondary_logical: tuple[str, Optional[int]] | None = None
+    if move.secondary_pawn_id is not None:
+        secondary_pawn = next(
+            (p for p in state.pawns if p.pawn_id == move.secondary_pawn_id and p.seat_index == move.seat_index),
+            None,
+        )
+        if secondary_pawn:
+            secondary_logical = _compute_logical_destination(secondary_pawn, move.secondary_direction, move.secondary_steps)
+
+    # Then apply the move to get final destinations (after slides)
     tmp_state = copy.deepcopy(state)
     try:
         new_state = apply_move(tmp_state, move)
     except Exception:
         # If anything goes wrong, fall back to no destination metadata.
-        return (None, None)
+        return (None, None, primary_logical, secondary_logical)
 
     primary = next(
         (
@@ -126,7 +226,7 @@ def _compute_move_destinations(
     if secondary is not None:
         secondary_dest = (secondary.position.kind, secondary.position.index)
 
-    return (primary_dest, secondary_dest)
+    return (primary_dest, secondary_dest, primary_logical, secondary_logical)
 
 
 class InMemoryPersistence:
@@ -385,7 +485,7 @@ class InMemoryPersistence:
         return (index - steps) % TRACK_LEN
 
     def _apply_slides_and_safety(self, state: GameState, pawn: Pawn, track_index: int, *, forward: bool) -> tuple[PawnPosition, Optional[List[int]]]:
-        """Apply slide and safety-zone entry rules for a pawn landing on a track index.
+        """Apply slide rules for a pawn landing on a track index.
 
         Returns (final_position, slide_indices or None).
         """
@@ -393,17 +493,16 @@ class InMemoryPersistence:
         slide = SLIDES.get(track_index)
         slide_indices: Optional[List[int]] = None
         if slide is not None:
+            owner_seat = int(slide["owner_seat"])  # type: ignore[arg-type]
+            # Per Sorry! rules: you cannot slide on your own color slide.
+            # If landing on own slide, stay on that track index without sliding.
+            if owner_seat == pawn.seat_index:
+                return PawnPosition(kind="track", index=track_index), None
+            # Opponent's slide: slide to the end and bump pawns along the way.
             slide_indices = list(slide["indices"])  # type: ignore[assignment]
             end_idx = slide_indices[-1]
-            owner_seat = int(slide["owner_seat"])  # type: ignore[arg-type]
-            is_near_safety = bool(slide["is_near_safety"])  # type: ignore[arg-type]
-            if is_near_safety and owner_seat == pawn.seat_index:
-                # Slide into the owner's Safety Zone
-                return PawnPosition(kind="safety", index=0), slide_indices
-            # Normal slide: end on the last slide square
             track_index = end_idx
 
-        # Safety Zone entry by forward move only
         return PawnPosition(kind="track", index=track_index), slide_indices
 
     def _bump_pawns_on_indices(self, state: GameState, indices: List[int], moving_pawn: Pawn) -> None:
@@ -641,7 +740,7 @@ class InMemoryPersistence:
         for idx, m in enumerate(moves):
             if m.seat_index != seat_index:
                 continue
-            primary_dest, secondary_dest = _compute_move_destinations(tmp_state, m)
+            primary_dest, secondary_dest, primary_logical, secondary_logical = _compute_move_destinations(tmp_state, m)
             moves_payload.append(
                 {
                     "index": idx,
@@ -652,10 +751,16 @@ class InMemoryPersistence:
                     "steps": m.steps,
                     "secondaryDirection": m.secondary_direction,
                     "secondarySteps": m.secondary_steps,
+                    # Final destination (after slides) - where pawn actually ends up
                     "destType": primary_dest[0] if primary_dest is not None else None,
                     "destIndex": primary_dest[1] if primary_dest is not None else None,
                     "secondaryDestType": secondary_dest[0] if secondary_dest is not None else None,
                     "secondaryDestIndex": secondary_dest[1] if secondary_dest is not None else None,
+                    # Logical destination (before slides) - where player clicks to select move
+                    "logicalDestType": primary_logical[0] if primary_logical is not None else None,
+                    "logicalDestIndex": primary_logical[1] if primary_logical is not None else None,
+                    "secondaryLogicalDestType": secondary_logical[0] if secondary_logical is not None else None,
+                    "secondaryLogicalDestIndex": secondary_logical[1] if secondary_logical is not None else None,
                 }
             )
 
@@ -1412,7 +1517,7 @@ class FirestorePersistence:
         for idx, m in enumerate(moves):
             if m.seat_index != seat_index:
                 continue
-            primary_dest, secondary_dest = _compute_move_destinations(tmp_state, m)
+            primary_dest, secondary_dest, primary_logical, secondary_logical = _compute_move_destinations(tmp_state, m)
             moves_payload.append(
                 {
                     "index": idx,
@@ -1423,10 +1528,16 @@ class FirestorePersistence:
                     "steps": m.steps,
                     "secondaryDirection": m.secondary_direction,
                     "secondarySteps": m.secondary_steps,
+                    # Final destination (after slides) - where pawn actually ends up
                     "destType": primary_dest[0] if primary_dest is not None else None,
                     "destIndex": primary_dest[1] if primary_dest is not None else None,
                     "secondaryDestType": secondary_dest[0] if secondary_dest is not None else None,
                     "secondaryDestIndex": secondary_dest[1] if secondary_dest is not None else None,
+                    # Logical destination (before slides) - where player clicks to select move
+                    "logicalDestType": primary_logical[0] if primary_logical is not None else None,
+                    "logicalDestIndex": primary_logical[1] if primary_logical is not None else None,
+                    "secondaryLogicalDestType": secondary_logical[0] if secondary_logical is not None else None,
+                    "secondaryLogicalDestIndex": secondary_logical[1] if secondary_logical is not None else None,
                 }
             )
 

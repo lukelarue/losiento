@@ -165,8 +165,7 @@ Requirements:
   - 4 pawns per player.
   - 1/2/Sorry! to leave Start.
   - Exact count required to enter Home.
-  - Slides allowed on any color.
-  - Special "slide into Safety Zone" rule when landing on slide start before Safety Zone.
+  - Slides (no sliding on your own color).
   - Safety Zones rules.
   - All card-specific behaviors (2 extra draw, 7 split, 10 forward/back, 11 switch, Sorry! limitations, etc.).
 - Return full before/after positions needed for move logging and UI.
@@ -538,10 +537,9 @@ All rules in `rules.md` must be covered by automated tests.
   - Moves that would land on own pawn are rejected if no alternative move exists.
 
 - **Slides**
-  - Sliding when landing on slide start.
-  - House rule: sliding on own color works.
-  - All pawns on slide path are sent to their Start, including sliding player.
-  - Special slide-into-Safety-Zone rule.
+  - Sliding when landing on slide start of opponent's color.
+  - Cannot slide on your own color slide (pawn stays on slide start without sliding).
+  - All pawns on slide path are sent to their Start, including sliding player's own pawns.
   - Interactions with card `Sorry!` when the landing space is another color's slide start (slide still applies and bumps all pawns along the slide).
 
 - **Safety Zones and Home**
@@ -829,7 +827,7 @@ This section tracks the current implementation status against the spec.
 
 1. **Extract pure rules engine API (COMPLETED – ls-10)**
    - `get_legal_moves` and `apply_move` are implemented in `losiento_game/engine.py` and `InMemoryPersistence.play_move` / `bot_step` are wired to use them.
-   - Foundational unit tests now exist under `losiento/tests/test_engine_basic.py`, covering deck composition, core movement, slides (including cross-color and slide-into-safety), Safety Zones, Home entry, self-bump prohibition, and key card behaviors (7-split, 10 forward/backward fallback, 11 forward/switch with restrictions, and Sorry! targeting/bumps).
+   - Foundational unit tests now exist under `losiento/tests/test_engine_basic.py`, covering deck composition, core movement, slides (no sliding on own color), Safety Zones, Home entry, self-bump prohibition, and key card behaviors (7-split, 10 forward/backward fallback, 11 forward/switch with restrictions, and Sorry! targeting/bumps).
    - Remaining coverage work (ls-12) focuses on a few gaps and edge-case combinations, such as deck/draw sequencing and 2’s extra-draw behavior, plus any additional regression tests discovered during playtesting.
 
 2. **Implement advanced card behaviors & selection (COMPLETED – ls-11)**

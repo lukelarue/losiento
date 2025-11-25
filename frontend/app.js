@@ -1131,45 +1131,48 @@
               if (selectedSecondaryPawnId) {
                 // Split-7 with an explicit pair: only consider moves whose
                 // primary/secondary pawns match the chosen pair, and where
-                // either pawn lands on this track index.
+                // either pawn lands on this track index (using logical dest,
+                // i.e. pre-slide position, so players click where they choose
+                // to land, not where slides take them).
                 matchingMoves = movesArray.filter(
                   (m) =>
                     ((m.pawnId === selectedPawnId &&
                       m.secondaryPawnId === selectedSecondaryPawnId) ||
                       (m.pawnId === selectedSecondaryPawnId &&
                         m.secondaryPawnId === selectedPawnId)) &&
-                    ((m.destType === "track" &&
-                      typeof m.destIndex === "number" &&
-                      m.destIndex === idx) ||
-                      (m.secondaryDestType === "track" &&
-                        typeof m.secondaryDestIndex === "number" &&
-                        m.secondaryDestIndex === idx))
+                    ((m.logicalDestType === "track" &&
+                      typeof m.logicalDestIndex === "number" &&
+                      m.logicalDestIndex === idx) ||
+                      (m.secondaryLogicalDestType === "track" &&
+                        typeof m.secondaryLogicalDestIndex === "number" &&
+                        m.secondaryLogicalDestIndex === idx))
                 );
               } else {
                 // 7 with a single pawn selected: highlight all legal 7 moves
                 // that involve this pawn, whether they are single-7 moves or
                 // 7-split moves with any partner, as long as this track index
-                // is the landing spot for the selected pawn.
+                // is the landing spot for the selected pawn (pre-slide).
                 matchingMoves = movesArray.filter(
                   (m) =>
                     (m.pawnId === selectedPawnId &&
-                      m.destType === "track" &&
-                      typeof m.destIndex === "number" &&
-                      m.destIndex === idx) ||
+                      m.logicalDestType === "track" &&
+                      typeof m.logicalDestIndex === "number" &&
+                      m.logicalDestIndex === idx) ||
                     (m.secondaryPawnId === selectedPawnId &&
-                      m.secondaryDestType === "track" &&
-                      typeof m.secondaryDestIndex === "number" &&
-                      m.secondaryDestIndex === idx)
+                      m.secondaryLogicalDestType === "track" &&
+                      typeof m.secondaryLogicalDestIndex === "number" &&
+                      m.secondaryLogicalDestIndex === idx)
                 );
               }
             } else {
-              // Cards 10 and 11: highlight simple forward/track destinations.
+              // Cards 10 and 11: highlight simple forward/track destinations
+              // (using logical dest, pre-slide position).
               matchingMoves = movesArray.filter(
                 (m) =>
                   m.pawnId === selectedPawnId &&
-                  m.destType === "track" &&
-                  typeof m.destIndex === "number" &&
-                  m.destIndex === idx
+                  m.logicalDestType === "track" &&
+                  typeof m.logicalDestIndex === "number" &&
+                  m.logicalDestIndex === idx
               );
             }
 
@@ -1182,43 +1185,43 @@
                 if (upcomingCard === "7") {
                   if (selectedSecondaryPawnId) {
                     // Explicit 7-split pair: only use moves for that pair and
-                    // this track destination (for either pawn).
+                    // this track destination (for either pawn, using logical/pre-slide dest).
                     candidates = movesNow.filter(
                       (m) =>
                         ((m.pawnId === selectedPawnId &&
                           m.secondaryPawnId === selectedSecondaryPawnId) ||
                           (m.pawnId === selectedSecondaryPawnId &&
                             m.secondaryPawnId === selectedPawnId)) &&
-                        ((m.destType === "track" &&
-                          typeof m.destIndex === "number" &&
-                          m.destIndex === idx) ||
-                          (m.secondaryDestType === "track" &&
-                            typeof m.secondaryDestIndex === "number" &&
-                            m.secondaryDestIndex === idx))
+                        ((m.logicalDestType === "track" &&
+                          typeof m.logicalDestIndex === "number" &&
+                          m.logicalDestIndex === idx) ||
+                          (m.secondaryLogicalDestType === "track" &&
+                            typeof m.secondaryLogicalDestIndex === "number" &&
+                            m.secondaryLogicalDestIndex === idx))
                     );
                   } else {
                     // Single pawn selected: allow both single-7 and split-7
                     // moves involving this pawn where this track index is the
-                    // landing square for the selected pawn.
+                    // landing square for the selected pawn (logical/pre-slide).
                     candidates = movesNow.filter(
                       (m) =>
                         (m.pawnId === selectedPawnId &&
-                          m.destType === "track" &&
-                          typeof m.destIndex === "number" &&
-                          m.destIndex === idx) ||
+                          m.logicalDestType === "track" &&
+                          typeof m.logicalDestIndex === "number" &&
+                          m.logicalDestIndex === idx) ||
                         (m.secondaryPawnId === selectedPawnId &&
-                          m.secondaryDestType === "track" &&
-                          typeof m.secondaryDestIndex === "number" &&
-                          m.secondaryDestIndex === idx)
+                          m.secondaryLogicalDestType === "track" &&
+                          typeof m.secondaryLogicalDestIndex === "number" &&
+                          m.secondaryLogicalDestIndex === idx)
                     );
                   }
                 } else {
                   candidates = movesNow.filter(
                     (m) =>
                       m.pawnId === selectedPawnId &&
-                      m.destType === "track" &&
-                      typeof m.destIndex === "number" &&
-                      m.destIndex === idx
+                      m.logicalDestType === "track" &&
+                      typeof m.logicalDestIndex === "number" &&
+                      m.logicalDestIndex === idx
                   );
                 }
 
@@ -1242,6 +1245,7 @@
           }
         }
 
+        // Home zone doesn't have slides, so logical and final dest are the same.
         if (homeGeom && selectedPawnId && upcomingCard === "7") {
           const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
           const homeSeatIndex = homeGeom.seatIndex;
@@ -1254,9 +1258,9 @@
                   m.secondaryPawnId === selectedSecondaryPawnId) ||
                   (m.pawnId === selectedSecondaryPawnId &&
                     m.secondaryPawnId === selectedPawnId)) &&
-                ((m.destType === "home" &&
+                ((m.logicalDestType === "home" &&
                   pawnSeatById.get(m.pawnId) === homeSeatIndex) ||
-                  (m.secondaryDestType === "home" &&
+                  (m.secondaryLogicalDestType === "home" &&
                     m.secondaryPawnId &&
                     pawnSeatById.get(m.secondaryPawnId) === homeSeatIndex))
             );
@@ -1264,10 +1268,10 @@
             matchingHomeMoves = movesArray.filter(
               (m) =>
                 (m.pawnId === selectedPawnId &&
-                  m.destType === "home" &&
+                  m.logicalDestType === "home" &&
                   pawnSeatById.get(m.pawnId) === homeSeatIndex) ||
                 (m.secondaryPawnId === selectedPawnId &&
-                  m.secondaryDestType === "home" &&
+                  m.secondaryLogicalDestType === "home" &&
                   m.secondaryPawnId &&
                   pawnSeatById.get(m.secondaryPawnId) === homeSeatIndex)
             );
@@ -1287,9 +1291,9 @@
                       m.secondaryPawnId === selectedSecondaryPawnId) ||
                       (m.pawnId === selectedSecondaryPawnId &&
                         m.secondaryPawnId === selectedPawnId)) &&
-                    ((m.destType === "home" &&
+                    ((m.logicalDestType === "home" &&
                       pawnSeatById.get(m.pawnId) === homeSeatIndexNow) ||
-                      (m.secondaryDestType === "home" &&
+                      (m.secondaryLogicalDestType === "home" &&
                         m.secondaryPawnId &&
                         pawnSeatById.get(m.secondaryPawnId) === homeSeatIndexNow))
                 );
@@ -1297,10 +1301,10 @@
                 candidates = movesNow.filter(
                   (m) =>
                     (m.pawnId === selectedPawnId &&
-                      m.destType === "home" &&
+                      m.logicalDestType === "home" &&
                       pawnSeatById.get(m.pawnId) === homeSeatIndexNow) ||
                     (m.secondaryPawnId === selectedPawnId &&
-                      m.secondaryDestType === "home" &&
+                      m.secondaryLogicalDestType === "home" &&
                       m.secondaryPawnId &&
                       pawnSeatById.get(m.secondaryPawnId) === homeSeatIndexNow)
                 );
@@ -1327,6 +1331,7 @@
 
         // Card 7: allow selecting moves that end in a Safety Zone cell by
         // clicking that safety tile, for both single-7 and split-7 moves.
+        // Safety zones don't have slides, so logical and final dest are the same.
         if (safetyGeom && selectedPawnId && upcomingCard === "7") {
           const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
           const safetySeatIndex = safetyGeom.seatIndex;
@@ -1340,30 +1345,30 @@
                   m.secondaryPawnId === selectedSecondaryPawnId) ||
                   (m.pawnId === selectedSecondaryPawnId &&
                     m.secondaryPawnId === selectedPawnId)) &&
-                ((m.destType === "safety" &&
+                ((m.logicalDestType === "safety" &&
                   pawnSeatById.get(m.pawnId) === safetySeatIndex &&
-                  typeof m.destIndex === "number" &&
-                  m.destIndex === safetyIndex) ||
-                  (m.secondaryDestType === "safety" &&
+                  typeof m.logicalDestIndex === "number" &&
+                  m.logicalDestIndex === safetyIndex) ||
+                  (m.secondaryLogicalDestType === "safety" &&
                     m.secondaryPawnId &&
                     pawnSeatById.get(m.secondaryPawnId) === safetySeatIndex &&
-                    typeof m.secondaryDestIndex === "number" &&
-                    m.secondaryDestIndex === safetyIndex))
+                    typeof m.secondaryLogicalDestIndex === "number" &&
+                    m.secondaryLogicalDestIndex === safetyIndex))
             );
           } else {
             matchingSafetyMoves = movesArray.filter(
               (m) =>
                 (m.pawnId === selectedPawnId &&
-                  m.destType === "safety" &&
+                  m.logicalDestType === "safety" &&
                   pawnSeatById.get(m.pawnId) === safetySeatIndex &&
-                  typeof m.destIndex === "number" &&
-                  m.destIndex === safetyIndex) ||
+                  typeof m.logicalDestIndex === "number" &&
+                  m.logicalDestIndex === safetyIndex) ||
                 (m.secondaryPawnId === selectedPawnId &&
-                  m.secondaryDestType === "safety" &&
+                  m.secondaryLogicalDestType === "safety" &&
                   m.secondaryPawnId &&
                   pawnSeatById.get(m.secondaryPawnId) === safetySeatIndex &&
-                  typeof m.secondaryDestIndex === "number" &&
-                  m.secondaryDestIndex === safetyIndex)
+                  typeof m.secondaryLogicalDestIndex === "number" &&
+                  m.secondaryLogicalDestIndex === safetyIndex)
             );
           }
 
@@ -1382,30 +1387,30 @@
                       m.secondaryPawnId === selectedSecondaryPawnId) ||
                       (m.pawnId === selectedSecondaryPawnId &&
                         m.secondaryPawnId === selectedPawnId)) &&
-                    ((m.destType === "safety" &&
+                    ((m.logicalDestType === "safety" &&
                       pawnSeatById.get(m.pawnId) === safetySeatIndexNow &&
-                      typeof m.destIndex === "number" &&
-                      m.destIndex === safetyIndexNow) ||
-                      (m.secondaryDestType === "safety" &&
+                      typeof m.logicalDestIndex === "number" &&
+                      m.logicalDestIndex === safetyIndexNow) ||
+                      (m.secondaryLogicalDestType === "safety" &&
                         m.secondaryPawnId &&
                         pawnSeatById.get(m.secondaryPawnId) === safetySeatIndexNow &&
-                        typeof m.secondaryDestIndex === "number" &&
-                        m.secondaryDestIndex === safetyIndexNow))
+                        typeof m.secondaryLogicalDestIndex === "number" &&
+                        m.secondaryLogicalDestIndex === safetyIndexNow))
                 );
               } else {
                 candidates = movesNow.filter(
                   (m) =>
                     (m.pawnId === selectedPawnId &&
-                      m.destType === "safety" &&
+                      m.logicalDestType === "safety" &&
                       pawnSeatById.get(m.pawnId) === safetySeatIndexNow &&
-                      typeof m.destIndex === "number" &&
-                      m.destIndex === safetyIndexNow) ||
+                      typeof m.logicalDestIndex === "number" &&
+                      m.logicalDestIndex === safetyIndexNow) ||
                     (m.secondaryPawnId === selectedPawnId &&
-                      m.secondaryDestType === "safety" &&
+                      m.secondaryLogicalDestType === "safety" &&
                       m.secondaryPawnId &&
                       pawnSeatById.get(m.secondaryPawnId) === safetySeatIndexNow &&
-                      typeof m.secondaryDestIndex === "number" &&
-                      m.secondaryDestIndex === safetyIndexNow)
+                      typeof m.secondaryLogicalDestIndex === "number" &&
+                      m.secondaryLogicalDestIndex === safetyIndexNow)
                 );
               }
 

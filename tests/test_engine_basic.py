@@ -109,7 +109,7 @@ class EngineBasicTests(unittest.TestCase):
         after_pos = (pawn_new.position.kind, pawn_new.position.index)
         self.assertNotEqual(before_pos, after_pos)
 
-    def test_slide_into_safety_bumps_other_pawn(self) -> None:
+    def test_landing_on_own_slide_does_not_slide(self) -> None:
         state, _, _ = self._make_basic_state()
 
         # Compute the start index of seat 0's first slide and place a pawn one
@@ -121,8 +121,9 @@ class EngineBasicTests(unittest.TestCase):
         mover = pawns0[0]
         mover.position = PawnPosition(kind="track", index=before_idx)
 
-        # Place an opponent pawn on the slide start so that it will be bumped
-        # when the mover slides into Safety.
+        # Place an opponent pawn on the slide start. Per Sorry! rules, landing
+        # on your own slide does NOT trigger sliding, so the opponent pawn
+        # should be bumped but the mover stays on the slide start.
         pawns1 = [p for p in state.pawns if p.seat_index == 1]
         blocker = pawns1[0]
         blocker.position = PawnPosition(kind="track", index=slide_start)
@@ -135,11 +136,11 @@ class EngineBasicTests(unittest.TestCase):
         mover_new = next(p for p in new_state.pawns if p.pawn_id == mover.pawn_id)
         blocker_new = next(p for p in new_state.pawns if p.pawn_id == blocker.pawn_id)
 
-        # Seat 0's first slide should send the mover directly into its Safety
-        # Zone at index 0, and any pawn on the slide path should be bumped to
-        # Start.
-        self.assertEqual(mover_new.position.kind, "safety")
-        self.assertEqual(mover_new.position.index, 0)
+        # Per Sorry! rules: you cannot slide on your own color slide.
+        # The mover should stay on the slide start (not slide to end or safety).
+        # The opponent pawn on that square should be bumped.
+        self.assertEqual(mover_new.position.kind, "track")
+        self.assertEqual(mover_new.position.index, slide_start)
         self.assertEqual(blocker_new.position.kind, "start")
 
     def test_self_bump_moves_are_not_generated(self) -> None:
@@ -200,17 +201,16 @@ class EngineBasicTests(unittest.TestCase):
         moves12 = get_legal_moves(state2, seat_index=0, card="12")
         self.assertFalse(moves12, "card 12 from the same position should overshoot home and be illegal")
 
-    def test_backward_4_from_safety_onto_own_near_safety_slide_enters_safety(self) -> None:
+    def test_backward_4_from_safety_onto_own_slide_does_not_slide(self) -> None:
         state, _, _ = self._make_basic_state()
 
         pawns0 = [p for p in state.pawns if p.seat_index == 0]
         pawn = pawns0[0]
 
         # Place the pawn in its Safety Zone at index 2. A backward-4 move from
-        # here should step out to the main track, land exactly on the start of
-        # seat 0's first slide (the near-safety slide), and, per the
-        # slide-into-safety house rule, end in Safety Zone index 0 instead of
-        # at the far end of the slide.
+        # here should step out to the main track and land exactly on the start of
+        # seat 0's first slide. Per Sorry! rules, you cannot slide on your own
+        # color slide, so the pawn stays on the slide start.
         pawn.position = PawnPosition(kind="safety", index=2)
 
         moves = get_legal_moves(state, seat_index=0, card="4")
@@ -224,8 +224,10 @@ class EngineBasicTests(unittest.TestCase):
         new_state = apply_move(state, back_moves[0])
         pawn_new = next(p for p in new_state.pawns if p.pawn_id == pawn.pawn_id)
 
-        self.assertEqual(pawn_new.position.kind, "safety")
-        self.assertEqual(pawn_new.position.index, 0)
+        # Pawn should stay on the slide start (track), not slide
+        slide_start = first_slide_indices(0)[0]
+        self.assertEqual(pawn_new.position.kind, "track")
+        self.assertEqual(pawn_new.position.index, slide_start)
 
     def test_slide_on_other_color_still_applies_and_bumps(self) -> None:
         state, _, _ = self._make_basic_state()
@@ -256,10 +258,11 @@ class EngineBasicTests(unittest.TestCase):
         self.assertEqual(mover_new.position.index, slide_end)
         self.assertEqual(blocker_new.position.kind, "start")
 
-    def test_backward_4_from_second_slide_end_allows_slide_and_bumps_enemy(self) -> None:
+    def test_backward_4_from_second_slide_end_onto_own_slide_does_not_slide(self) -> None:
         state, _, _ = self._make_basic_state()
 
         slide_indices = second_slide_indices(0)
+        slide_start = slide_indices[0]
         slide_end = slide_indices[-1]
 
         pawns0 = [p for p in state.pawns if p.seat_index == 0]
@@ -268,6 +271,7 @@ class EngineBasicTests(unittest.TestCase):
         mover = pawns0[0]
         mover.position = PawnPosition(kind="track", index=slide_end)
 
+        # Place opponent pawn on slide path (not on slide start)
         blocker = pawns1[0]
         blocker.position = PawnPosition(kind="track", index=slide_indices[1])
 
@@ -283,20 +287,25 @@ class EngineBasicTests(unittest.TestCase):
         mover_new = next(p for p in new_state.pawns if p.pawn_id == mover.pawn_id)
         blocker_new = next(p for p in new_state.pawns if p.pawn_id == blocker.pawn_id)
 
+        # Per Sorry! rules: cannot slide on own color slide.
+        # Mover lands on slide start but does NOT slide, so blocker is not bumped.
         self.assertEqual(mover_new.position.kind, "track")
-        self.assertEqual(mover_new.position.index, slide_end)
-        self.assertEqual(blocker_new.position.kind, "start")
+        self.assertEqual(mover_new.position.index, slide_start)
+        # Blocker is on slide_indices[1], not at slide_start, so not affected
+        self.assertEqual(blocker_new.position.kind, "track")
+        self.assertEqual(blocker_new.position.index, slide_indices[1])
 
     def test_card11_forward_and_switch(self) -> None:
         state, seats, _ = self._make_basic_state()
 
         # Place one pawn for seat 0 and one pawn for seat 1 on the track.
+        # Use positions where forward-11 doesn't overshoot home (far from safety entry).
         pawns0 = [p for p in state.pawns if p.seat_index == 0]
         pawns1 = [p for p in state.pawns if p.seat_index == 1]
         mover = pawns0[0]
         target = pawns1[0]
-        mover.position = PawnPosition(kind="track", index=0)
-        target.position = PawnPosition(kind="track", index=10)
+        mover.position = PawnPosition(kind="track", index=20)
+        target.position = PawnPosition(kind="track", index=35)
 
         # First, ensure we still get at least one forward-11 move.
         moves = get_legal_moves(state, seat_index=0, card="11")
@@ -315,8 +324,8 @@ class EngineBasicTests(unittest.TestCase):
 
         self.assertEqual(mover_new.position.kind, "track")
         self.assertEqual(target_new.position.kind, "track")
-        self.assertEqual(mover_new.position.index, 10, "mover should take target's original index")
-        self.assertEqual(target_new.position.index, 0, "target should take mover's original index")
+        self.assertEqual(mover_new.position.index, 35, "mover should take target's original index")
+        self.assertEqual(target_new.position.index, 20, "target should take mover's original index")
 
     def test_card7_cannot_leave_start(self) -> None:
         state, _, _ = self._make_basic_state()
@@ -667,8 +676,10 @@ class PersistenceInMemoryTests(unittest.TestCase):
         persistence.bot_step(game_id)
 
         state_after = persistence.games[game_id]["state"]
-        self.assertEqual(len(state_after.discard_pile), 2)
-        self.assertEqual(deck_len_before - len(state_after.deck), 2)
+        # Card 2 should draw exactly one card but keep the same turn/seat.
+        # The next bot_step call will draw the extra card.
+        self.assertEqual(len(state_after.discard_pile), 1)
+        self.assertEqual(deck_len_before - len(state_after.deck), 1)
         self.assertEqual(state_after.turn_number, turn_before)
         self.assertEqual(state_after.current_seat_index, current_before)
 
