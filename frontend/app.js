@@ -1055,6 +1055,12 @@
           const pill = document.createElement("div");
           pill.className = "status-pill";
 
+          // Add seat color class for colored background
+          const seatColor = colors[seatIndex];
+          if (seatColor) {
+            pill.classList.add(`status-pill-${seatColor}`);
+          }
+
           if (state.result === "win" && state.winnerSeatIndex === seatIndex) {
             pill.classList.add("status-pill-winner");
           } else if (state.result === "active" && state.currentSeatIndex === seatIndex) {
