@@ -12,7 +12,7 @@ try:
 except Exception:
     firestore = None  # type: ignore
 
-from .models import GameSettings, GameState, Seat, Pawn, PawnPosition, Card, game_state_to_dict
+from .models import GameSettings, GameState, Seat, Pawn, PawnPosition, Card, CardHistoryEntry, game_state_to_dict
 from .engine import (
     initialize_game,
     TRACK_LEN,
@@ -335,13 +335,49 @@ class InMemoryPersistence:
     def leave_game(self, game_id: str, user_id: str) -> Dict[str, Any]:
         game = self._get_game(game_id)
         seats: List[Seat] = game["seats"]
+        
         if game["host_id"] == user_id:
-            game["phase"] = "aborted"
-            game["updated_at"] = _now()
-            for s in seats:
-                if s.player_id and s.player_id in self.user_active_game:
-                    del self.user_active_game[s.player_id]
-            return game
+            # Host is leaving
+            if game["phase"] == "lobby":
+                # In lobby, host leaving aborts the game
+                game["phase"] = "aborted"
+                game["updated_at"] = _now()
+                for s in seats:
+                    if s.player_id and s.player_id in self.user_active_game:
+                        del self.user_active_game[s.player_id]
+                return game
+            else:
+                # During active game, host seat becomes bot and we pick a new host
+                for s in seats:
+                    if s.player_id == user_id:
+                        s.player_id = None
+                        s.display_name = None
+                        s.is_bot = True
+                        s.status = "bot"
+                        break
+                if user_id in self.user_active_game:
+                    del self.user_active_game[user_id]
+                
+                # Find remaining human players to pick a new host
+                remaining_humans = [s for s in seats if not s.is_bot and s.player_id]
+                if remaining_humans:
+                    # Randomly pick a new host from remaining humans
+                    rnd = __import__("random")
+                    new_host_seat = rnd.choice(remaining_humans)
+                    game["host_id"] = new_host_seat.player_id
+                    game["host_name"] = new_host_seat.display_name or new_host_seat.player_id
+                else:
+                    # No human players left - end the game
+                    game["phase"] = "finished"
+                    state = game.get("state")
+                    if isinstance(state, GameState):
+                        state.result = "aborted"
+                        state.phase = "finished"
+                
+                game["updated_at"] = _now()
+                return game
+        
+        # Non-host leaving: convert their seat to bot
         for s in seats:
             if s.player_id == user_id:
                 s.player_id = None
@@ -785,6 +821,18 @@ class InMemoryPersistence:
 
         try:
             card = self._draw_card(state)
+            
+            # Record card in server-side history
+            seats: List[Seat] = game["seats"]
+            display_name = seats[seat_index].display_name if seat_index < len(seats) else None
+            state.card_history.append(CardHistoryEntry(
+                card=card,
+                seat_index=seat_index,
+                display_name=display_name,
+            ))
+            # Keep only last 20 entries
+            if len(state.card_history) > 20:
+                state.card_history = state.card_history[-20:]
 
             # Use the pure rules engine to compute and apply a move.
             moves = get_legal_moves(state, seat_index, card)
@@ -832,6 +880,18 @@ class InMemoryPersistence:
             raise ValueError("not_bot_turn")
 
         card = self._draw_card(state)
+        
+        # Record card in server-side history
+        display_name = seats[current].display_name if current < len(seats) else "Bot"
+        state.card_history.append(CardHistoryEntry(
+            card=card,
+            seat_index=current,
+            display_name=display_name or "Bot",
+        ))
+        # Keep only last 20 entries
+        if len(state.card_history) > 20:
+            state.card_history = state.card_history[-20:]
+        
         moves = get_legal_moves(state, current, card)
         if moves:
             # Bots choose a random legal move among the available options.
@@ -962,6 +1022,16 @@ class FirestorePersistence:
                 )
             )
 
+        # Decode card history
+        card_history_data = state_dict.get("cardHistory") or []
+        card_history: List[CardHistoryEntry] = []
+        for ch in card_history_data:
+            card_history.append(CardHistoryEntry(
+                card=ch.get("card", ""),
+                seat_index=int(ch.get("seatIndex", 0)),
+                display_name=ch.get("displayName"),
+            ))
+
         return GameState(
             game_id=game_id,
             host_id=str(data.get("hostId", "")),
@@ -975,6 +1045,7 @@ class FirestorePersistence:
             current_seat_index=int(state_dict.get("currentSeatIndex", 0)),
             winner_seat_index=state_dict.get("winnerSeatIndex"),
             result=str(state_dict.get("result", "active")),
+            card_history=card_history,
         )
 
     def _ensure_deck(self, state: GameState) -> None:
@@ -1251,8 +1322,10 @@ class FirestorePersistence:
         """Handle a player leaving a Firestore-backed game.
 
         Behaviour mirrors InMemoryPersistence.leave_game and the spec:
-        - If the host leaves (lobby or active), abort the game and clear
+        - If the host leaves during lobby, abort the game and clear
           activeGameId for all participants.
+        - If the host leaves during active game, convert their seat to bot,
+          pick a new host from remaining humans, or end game if none left.
         - If a non-host leaves, convert their seat into a bot seat and clear
           their activeGameId.
         """
@@ -1268,26 +1341,58 @@ class FirestorePersistence:
         now = _now()
 
         if host_id == user_id:
-            # Host leaving aborts the game regardless of phase.
-            data["phase"] = "aborted"
-            # If state exists, mark result as aborted.
-            state = data.get("state")
-            if isinstance(state, dict):
-                state["result"] = "aborted"
-                data["state"] = state
-            data["abortedReason"] = "host_left"
-            data["endedAt"] = now
-            data["updatedAt"] = now
-            game_ref.set(data)
+            # Host is leaving
+            if data.get("phase") == "lobby":
+                # In lobby, host leaving aborts the game
+                data["phase"] = "aborted"
+                data["abortedReason"] = "host_left"
+                data["endedAt"] = now
+                data["updatedAt"] = now
+                game_ref.set(data)
 
-            # Clear activeGameId for all players in seats.
-            for s in seats:
-                pid = s.get("playerId")
-                if pid:
-                    user_ref = self._users_collection().document(pid)
-                    user_ref.set({"activeGameId": None}, merge=True)
+                # Clear activeGameId for all players in seats.
+                for s in seats:
+                    pid = s.get("playerId")
+                    if pid:
+                        user_ref = self._users_collection().document(pid)
+                        user_ref.set({"activeGameId": None}, merge=True)
 
-            return self._snapshot_to_game(game_ref.get())
+                return self._snapshot_to_game(game_ref.get())
+            else:
+                # During active game, host seat becomes bot and we pick a new host
+                for s in seats:
+                    if s.get("playerId") == user_id:
+                        s["playerId"] = None
+                        s["displayName"] = None
+                        s["isBot"] = True
+                        s["status"] = "bot"
+                        break
+
+                # Clear the leaving host's activeGameId
+                user_ref = self._users_collection().document(user_id)
+                user_ref.set({"activeGameId": None}, merge=True)
+
+                # Find remaining human players to pick a new host
+                remaining_humans = [s for s in seats if not s.get("isBot") and s.get("playerId")]
+                if remaining_humans:
+                    # Randomly pick a new host from remaining humans
+                    rnd = __import__("random")
+                    new_host_seat = rnd.choice(remaining_humans)
+                    data["hostId"] = new_host_seat.get("playerId")
+                    data["hostName"] = new_host_seat.get("displayName") or new_host_seat.get("playerId")
+                else:
+                    # No human players left - end the game
+                    data["phase"] = "finished"
+                    state = data.get("state")
+                    if isinstance(state, dict):
+                        state["result"] = "aborted"
+                        data["state"] = state
+
+                data["seats"] = seats
+                data["updatedAt"] = now
+                game_ref.set(data)
+
+                return self._snapshot_to_game(game_ref.get())
 
         # Non-host: convert their seat into a bot seat.
         for s in seats:
@@ -1588,6 +1693,17 @@ class FirestorePersistence:
                 raise ValueError("not_your_turn")
 
             card = self._draw_card(state)
+            
+            # Record card in server-side history
+            display_name = seats_data[seat_index].get("displayName") if seat_index < len(seats_data) else None
+            state.card_history.append(CardHistoryEntry(
+                card=card,
+                seat_index=seat_index,
+                display_name=display_name,
+            ))
+            # Keep only last 20 entries
+            if len(state.card_history) > 20:
+                state.card_history = state.card_history[-20:]
 
             moves = get_legal_moves(state, seat_index, card)
             if moves:
@@ -1677,6 +1793,18 @@ class FirestorePersistence:
                 raise ValueError("not_bot_turn")
 
             card = self._draw_card(state)
+            
+            # Record card in server-side history
+            display_name = seats_data[current].get("displayName") if current < len(seats_data) else "Bot"
+            state.card_history.append(CardHistoryEntry(
+                card=card,
+                seat_index=current,
+                display_name=display_name or "Bot",
+            ))
+            # Keep only last 20 entries
+            if len(state.card_history) > 20:
+                state.card_history = state.card_history[-20:]
+            
             moves = get_legal_moves(state, current, card)
             if moves:
                 before_state_for_logging = game_state_to_dict(state)["state"]

@@ -37,6 +37,13 @@ class GameSettings:
 
 
 @dataclass
+class CardHistoryEntry:
+    card: Card
+    seat_index: int
+    display_name: Optional[str] = None
+
+
+@dataclass
 class GameState:
     game_id: str
     host_id: str
@@ -50,9 +57,15 @@ class GameState:
     current_seat_index: int
     winner_seat_index: Optional[int]
     result: Literal["active", "win", "aborted"]
+    card_history: List[CardHistoryEntry] = None  # type: ignore
+
+    def __post_init__(self):
+        if self.card_history is None:
+            self.card_history = []
 
 
 def game_state_to_dict(state: GameState) -> Dict[str, Any]:
+    card_history_list = state.card_history if state.card_history else []
     return {
         "game_id": state.game_id,
         "host_id": state.host_id,
@@ -92,5 +105,13 @@ def game_state_to_dict(state: GameState) -> Dict[str, Any]:
             },
             "winnerSeatIndex": state.winner_seat_index,
             "result": state.result,
+            "cardHistory": [
+                {
+                    "card": entry.card,
+                    "seatIndex": entry.seat_index,
+                    "displayName": entry.display_name,
+                }
+                for entry in card_history_list
+            ],
         },
     }

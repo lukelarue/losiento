@@ -780,6 +780,23 @@ button:disabled {
   color: #bbf7d0;
 }
 
+.kick-player-btn {
+  padding: 0.05rem 0.4rem;
+  border-radius: 9999px;
+  background: #b91c1c;
+  color: #fef2f2;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-top: 0;
+  cursor: pointer;
+}
+
+.kick-player-btn:hover {
+  background: #991b1b;
+}
+
 @keyframes your-turn-spin {
   0% {
     transform: rotate(0deg);

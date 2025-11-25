@@ -53,12 +53,8 @@
   let selectedMoveIndex = null;
   let lastShownCard = null;
   let lastShownGameId = null;
-  let cardHistory = [];
+  // Card history is now server-side, so we just track what game we're showing
   let cardHistoryGameId = null;
-  let lastHistoryDiscardLength = 0;
-  let historyInitialized = false;
-  let lastHistorySeatIndex = null;
-  let pendingHistoryDetails = null;
   let autoplayBotEnabled = false;
   let autoplayTimeout = null;
   let autoplayPreferredOn = true;
@@ -156,8 +152,9 @@
   function startPolling() {
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(() => {
-      if (!currentGame || !currentGame.state) return;
-      if (currentGame.phase !== "active") return;
+      if (!currentGame) return;
+      // Poll in both lobby (for non-hosts to see game start) and active phases
+      if (currentGame.phase !== "active" && currentGame.phase !== "lobby") return;
       fetchState();
     }, 2000);
   }
@@ -218,6 +215,10 @@
     scheduleAutoplayTick();
   }
 
+  function isHost() {
+    return currentGame && currentGame.hostId === USER_ID;
+  }
+
   function renderFromGame() {
     if (!currentGame) {
       stopPolling();
@@ -228,11 +229,7 @@
       upcomingCard = null;
       upcomingMoves = [];
       selectedMoveIndex = null;
-      cardHistory = [];
       cardHistoryGameId = null;
-      lastHistoryDiscardLength = 0;
-      historyInitialized = false;
-      lastHistorySeatIndex = null;
       lastPreviewGameId = null;
       lastPreviewTurnNumber = null;
       lastPreviewDiscardLength = null;
@@ -241,16 +238,18 @@
     }
 
     if (currentGame.phase === "lobby") {
-      stopPolling();
       stopAutoplay();
       renderLobby();
       setScreen("lobby");
+      // Enable polling in lobby so non-hosts see when game starts
+      startPolling();
     } else if (currentGame.phase === "active") {
       renderGame();
       setScreen("game");
       startPolling();
       refreshLegalMovers();
-      if (autoplayPreferredOn && !autoplayBotEnabled) {
+      // Only host can use autoplay
+      if (isHost() && autoplayPreferredOn && !autoplayBotEnabled) {
         startAutoplay();
       }
     } else {
@@ -470,6 +469,7 @@
     const seats = g.seats || [];
     lobbySeatsEl.innerHTML = "";
     const colors = seatColorMap(g);
+    const amHost = isHost();
 
     seats.forEach((s) => {
       const seatEl = document.createElement("div");
@@ -478,7 +478,8 @@
       const header = document.createElement("div");
       header.className = "lobby-seat-header";
       const label = document.createElement("span");
-      label.textContent = `Seat ${s.index} (${s.color})`;
+      // Display seat numbers as 1-4 instead of 0-3
+      label.textContent = `Seat ${s.index + 1} (${s.color})`;
 
       const pill = document.createElement("span");
       pill.classList.add("pill");
@@ -501,7 +502,8 @@
       body.textContent = s.displayName || (s.isBot ? "Bot" : "(empty)");
       seatEl.appendChild(body);
 
-      if (s.index !== 0 && g.phase === "lobby") {
+      // Only host can configure seats
+      if (s.index !== 0 && g.phase === "lobby" && amHost) {
         const controls = document.createElement("div");
         const toBot = document.createElement("button");
         toBot.textContent = s.isBot ? "Make human" : "Make bot";
@@ -527,6 +529,12 @@
 
       lobbySeatsEl.appendChild(seatEl);
     });
+
+    // Disable start button for non-hosts
+    if (startGameBtn) {
+      startGameBtn.disabled = !amHost;
+      startGameBtn.title = amHost ? "" : "Only the host can start the game";
+    }
   }
 
   function renderGame() {
@@ -553,125 +561,34 @@
     const discard = Array.isArray(state.discardPile) ? state.discardPile : [];
     const lastCard = discard.length ? discard[discard.length - 1] : null;
 
-    if (lastCard && lastCard !== lastShownCard) {
+    // Use server-side card history for toast
+    const serverCardHistory = Array.isArray(state.cardHistory) ? state.cardHistory : [];
+    if (serverCardHistory.length > 0 && lastCard && lastCard !== lastShownCard) {
+      const lastEntry = serverCardHistory[serverCardHistory.length - 1];
       let label = String(lastCard);
       if (label === "Sorry!") {
         label = "¡Lo siento!";
       }
-      const seats = g.seats || [];
-      const sameGameAsHistory = g.gameId === cardHistoryGameId;
-      const fallbackSeatIndex = state.currentSeatIndex;
-      const cardSeatIndex =
-        sameGameAsHistory && lastHistorySeatIndex != null
-          ? lastHistorySeatIndex
-          : fallbackSeatIndex;
-      let seatLabel = null;
-      if (
-        Array.isArray(seats) &&
-        cardSeatIndex != null &&
-        cardSeatIndex >= 0 &&
-        cardSeatIndex < seats.length
-      ) {
-        const seat = seats[cardSeatIndex];
-        const name =
-          seat && typeof seat.displayName === "string" && seat.displayName.trim()
-            ? seat.displayName.trim()
-            : seat && seat.isBot
-            ? "Bot"
-            : "";
-        seatLabel = name ? `Seat ${cardSeatIndex} (${name})` : `Seat ${cardSeatIndex}`;
-      } else if (cardSeatIndex != null) {
-        seatLabel = `Seat ${cardSeatIndex}`;
-      }
-      const toastMessage =
-        seatLabel != null ? `${seatLabel} played a ${label}` : `Played a ${label}`;
+      const cardSeatIndex = lastEntry.seatIndex;
+      const displayName = lastEntry.displayName;
+      // Use 1-indexed seat numbers
+      const seatLabel = displayName
+        ? `Seat ${cardSeatIndex + 1} (${displayName})`
+        : `Seat ${cardSeatIndex + 1}`;
+      const toastMessage = `${seatLabel} played a ${label}`;
       showToast(toastMessage, 3000);
       lastShownCard = lastCard;
     }
 
     if (g.gameId !== cardHistoryGameId) {
       cardHistoryGameId = g.gameId;
-      cardHistory = [];
-      lastHistoryDiscardLength = 0;
-      historyInitialized = false;
-      lastHistorySeatIndex = null;
-    }
-
-    if (!historyInitialized) {
-      if (discard.length > 0) {
-        const initialCards = discard.slice(-10);
-        initialCards.forEach((card) => {
-          cardHistory.push({ card, seatIndex: null, expanded: false });
-        });
-      }
-      lastHistoryDiscardLength = discard.length;
-      lastHistorySeatIndex = state.currentSeatIndex;
-      historyInitialized = true;
-    } else {
-      if (discard.length < lastHistoryDiscardLength) {
-        const prevSeatIndex =
-          lastHistorySeatIndex != null ? lastHistorySeatIndex : state.currentSeatIndex;
-        const resetCards = discard.slice();
-        let attachedPendingSummary = false;
-        resetCards.forEach((card) => {
-          const entry = { card, seatIndex: prevSeatIndex, expanded: false };
-          if (
-            !attachedPendingSummary &&
-            pendingHistoryDetails &&
-            pendingHistoryDetails.seatIndex === prevSeatIndex &&
-            typeof pendingHistoryDetails.summary === "string" &&
-            pendingHistoryDetails.summary
-          ) {
-            entry.moveSummary = pendingHistoryDetails.summary;
-            attachedPendingSummary = true;
-          }
-          cardHistory.push(entry);
-          if (cardHistory.length > 10) {
-            cardHistory = cardHistory.slice(cardHistory.length - 10);
-          }
-        });
-        if (attachedPendingSummary) {
-          pendingHistoryDetails = null;
-        }
-        lastHistoryDiscardLength = discard.length;
-        lastHistorySeatIndex = state.currentSeatIndex;
-      } else if (discard.length > lastHistoryDiscardLength) {
-        const prevSeatIndex =
-          lastHistorySeatIndex != null ? lastHistorySeatIndex : state.currentSeatIndex;
-        const newCards = discard.slice(lastHistoryDiscardLength);
-        let attachedPendingSummary = false;
-        newCards.forEach((card) => {
-          const entry = { card, seatIndex: prevSeatIndex, expanded: false };
-          if (
-            !attachedPendingSummary &&
-            pendingHistoryDetails &&
-            pendingHistoryDetails.seatIndex === prevSeatIndex &&
-            typeof pendingHistoryDetails.summary === "string" &&
-            pendingHistoryDetails.summary
-          ) {
-            entry.moveSummary = pendingHistoryDetails.summary;
-            attachedPendingSummary = true;
-          }
-          cardHistory.push(entry);
-          if (cardHistory.length > 10) {
-            cardHistory = cardHistory.slice(cardHistory.length - 10);
-          }
-        });
-        if (attachedPendingSummary) {
-          pendingHistoryDetails = null;
-        }
-        lastHistoryDiscardLength = discard.length;
-        lastHistorySeatIndex = state.currentSeatIndex;
-      } else {
-        lastHistorySeatIndex = state.currentSeatIndex;
-      }
     }
 
     const resultText =
       state.result === "active"
         ? "In progress"
         : state.result === "win"
-        ? `Won by seat ${state.winnerSeatIndex}`
+        ? `Won by Seat ${state.winnerSeatIndex + 1}`
         : state.result;
 
     const isActive = state.result === "active";
@@ -753,6 +670,10 @@
     const currentSeatSeat = seats[state.currentSeatIndex];
     const isBotTurn = !!(currentSeatSeat && currentSeatSeat.isBot);
 
+    // Check if it's the viewer's turn
+    const isViewersTurn = viewerSeatIndex != null && viewerSeatIndex === state.currentSeatIndex;
+    const amHost = isHost();
+
     if (turnActionBtn) {
       let label = "";
       turnActionBtn.classList.remove("turn-btn-human", "turn-btn-bot");
@@ -761,15 +682,23 @@
         turnActionBtn.disabled = true;
       } else if (isBotTurn) {
         label = "Bot turn";
-        turnActionBtn.disabled = false;
+        // Only host can trigger bot turns
+        turnActionBtn.disabled = !amHost;
         turnActionBtn.classList.add("turn-btn-bot");
       } else {
         label = "Play turn";
         const requiresSelection = hasIndexedMoves && !onlySwitchMovesFor11;
-        turnActionBtn.disabled = !isActive || (requiresSelection && !hasSelectedMove);
+        // Disable if not your turn OR if selection required but not made
+        turnActionBtn.disabled = !isViewersTurn || (requiresSelection && !hasSelectedMove);
         turnActionBtn.classList.add("turn-btn-human");
       }
       turnActionBtn.textContent = label;
+    }
+
+    // Update autoplay button - only host can use it
+    if (autoplayBotBtn) {
+      autoplayBotBtn.disabled = !amHost;
+      autoplayBotBtn.title = amHost ? "" : "Only the host can control autoplay";
     }
 
     // Track grid 0-59 laid out on a 16x16 outer ring
@@ -1036,7 +965,8 @@
               suffix = ` (${seat.displayName})`;
             }
           }
-          label.textContent = `Seat ${seatIndex}${suffix}`;
+          // Use 1-indexed seat numbers
+          label.textContent = `Seat ${seatIndex + 1}${suffix}`;
           pill.appendChild(label);
 
           const isViewerTurn =
@@ -1052,6 +982,33 @@
           }
           turnPill.textContent = "Your turn";
           pill.appendChild(turnPill);
+
+          // Add kick button for host (only for non-host seats with human players)
+          if (amHost && seatIndex !== 0 && seat && !seat.isBot && seat.playerId && isActive) {
+            const kickBtn = document.createElement("button");
+            kickBtn.className = "kick-player-btn";
+            kickBtn.textContent = "Kick";
+            kickBtn.addEventListener("click", async () => {
+              if (!confirm(`Kick player from Seat ${seatIndex + 1}? They will be replaced by a bot.`)) {
+                return;
+              }
+              try {
+                const updated = await api("/kick", {
+                  method: "POST",
+                  body: JSON.stringify({
+                    game_id: g.gameId,
+                    seat_index: seatIndex,
+                  }),
+                });
+                currentGame = updated;
+                renderFromGame();
+                showToast(`Player kicked from Seat ${seatIndex + 1}`);
+              } catch (err) {
+                showToast(`Kick failed: ${err.message}`);
+              }
+            });
+            pill.appendChild(kickBtn);
+          }
 
           const home = homeCount[seatIndex] || 0;
           const homeSpan = document.createElement("span");
@@ -1814,6 +1771,7 @@
       }
     }
 
+    // Use server-side card history
     if (cardHistoryEl) {
       let prevScrollTop = 0;
       let prevScrollHeight = 0;
@@ -1826,7 +1784,7 @@
       }
 
       cardHistoryEl.innerHTML = "";
-      if (!cardHistory || cardHistory.length === 0) {
+      if (!serverCardHistory || serverCardHistory.length === 0) {
         const empty = document.createElement("div");
         empty.className = "card-history-empty";
         empty.textContent = "No cards drawn yet.";
@@ -1834,9 +1792,8 @@
       } else {
         const list = document.createElement("div");
         list.className = "card-history-list";
-        const historyToRender = Array.isArray(cardHistory)
-          ? cardHistory.slice().reverse()
-          : [];
+        // Show most recent first
+        const historyToRender = serverCardHistory.slice().reverse();
 
         historyToRender.forEach((entry) => {
           const item = document.createElement("div");
@@ -1849,7 +1806,11 @@
           seatLabel.className = "card-history-seat";
           let seatText = "Seat ?";
           if (entry && entry.seatIndex != null) {
-            seatText = `Seat ${entry.seatIndex}`;
+            // Use 1-indexed seat numbers
+            const displayName = entry.displayName;
+            seatText = displayName
+              ? `Seat ${entry.seatIndex + 1} (${displayName})`
+              : `Seat ${entry.seatIndex + 1}`;
             if (Object.prototype.hasOwnProperty.call(colors, entry.seatIndex)) {
               const seatColor = colors[entry.seatIndex];
               if (seatColor) {
@@ -1880,27 +1841,15 @@
             toggle.textContent = "Details";
 
             const descEl = document.createElement("div");
-            descEl.className = "card-history-desc";
-            if (!entry.expanded) {
-              descEl.classList.add("hidden");
-            }
+            descEl.className = "card-history-desc hidden";
             descEl.textContent = descText;
-            if (entry && typeof entry.moveSummary === "string" && entry.moveSummary) {
-              descEl.appendChild(document.createElement("br"));
-              const moveEl = document.createElement("span");
-              moveEl.className = "card-history-move";
-              moveEl.textContent = `Move: ${entry.moveSummary}`;
-              descEl.appendChild(moveEl);
-            }
 
             toggle.addEventListener("click", () => {
               const isHidden = descEl.classList.contains("hidden");
               if (isHidden) {
                 descEl.classList.remove("hidden");
-                entry.expanded = true;
               } else {
                 descEl.classList.add("hidden");
-                entry.expanded = false;
               }
             });
 
@@ -2044,34 +1993,6 @@
       return;
     }
     try {
-      let historySummary = "";
-      let historySeatIndex = null;
-      if (currentGame && currentGame.state && currentGame.state.result === "active") {
-        const g = currentGame;
-        const state = g.state;
-        const colors = seatColorMap(g);
-        const move = findSelectedMove(movesArray, selectedMoveIndex);
-        if (move && upcomingCard) {
-          const base = buildMoveSummaryBase(
-            upcomingCard,
-            move,
-            state,
-            colors
-          );
-          if (base) {
-            historySummary = base;
-            historySeatIndex = state.currentSeatIndex;
-          }
-        }
-      }
-      if (historySummary && historySeatIndex != null) {
-        pendingHistoryDetails = {
-          seatIndex: historySeatIndex,
-          summary: historySummary,
-        };
-      } else {
-        pendingHistoryDetails = null;
-      }
       const payload = selectedMoveIndex != null ? { moveIndex: selectedMoveIndex } : {};
       const data = await api("/play", {
         method: "POST",
@@ -2086,7 +2007,6 @@
       legalMoverPawnIds = new Set();
       renderFromGame();
     } catch (err) {
-      pendingHistoryDetails = null;
       showToast(`Move failed: ${err.message}`);
     }
   }
@@ -2220,6 +2140,11 @@
     if (autoplayBotBtn) {
       autoplayBotBtn.textContent = "Autoplay bot turns (off)";
       autoplayBotBtn.addEventListener("click", () => {
+        // Only host can toggle autoplay
+        if (!isHost()) {
+          showToast("Only the host can control autoplay");
+          return;
+        }
         if (autoplayBotEnabled) {
           autoplayPreferredOn = false;
           stopAutoplay();
