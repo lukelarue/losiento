@@ -442,6 +442,11 @@ button:disabled {
   color: #111827;
 }
 
+.game-card-move-status-skip {
+  color: #047857;
+  font-weight: 600;
+}
+
 .game-card-selected {
   margin-top: 0.4rem;
   font-size: 0.8rem;
@@ -524,6 +529,20 @@ button:disabled {
   gap: 0.75rem;
 }
 
+.game-top-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.game-top-row #autoplay-bot {
+  margin-left: auto;
+  min-width: 8rem;
+  font-size: 1rem;
+  padding: 0.55rem 1.4rem;
+  white-space: nowrap;
+}
+
 .game-right-top {
   display: flex;
   justify-content: space-between;
@@ -542,6 +561,7 @@ button:disabled {
   padding: 0.75rem;
   border-radius: 0.5rem;
   border: 1px solid #111827;
+  overflow: hidden;
 }
 
 .board-panel h3 {
@@ -558,7 +578,7 @@ button:disabled {
   border-radius: 0.5rem;
   position: relative;
   z-index: 0;
-  width: 90%;
+  width: 85%;
   max-width: 100%;
   margin: 0 auto;
 }
@@ -1124,5 +1144,291 @@ button:disabled {
 @media (max-width: 800px) {
   .game-layout {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================
+   ¡Lo Siento! Visual Mode
+   ============================================ */
+
+/* Interface Toggle Buttons */
+.interface-toggle {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.interface-toggle-left {
+  display: flex;
+  flex-direction: row;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.mode-btn {
+  padding: 0.4rem 0.9rem;
+  border-radius: 9999px;
+  border: 1px solid #374151;
+  background: #111827;
+  color: #9ca3af;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mode-btn:hover {
+  background: #1f2937;
+  border-color: #4b5563;
+  color: #e5e7eb;
+}
+
+.mode-btn-active {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 2px #fbbf24, 0 0 10px rgba(251, 191, 36, 0.5);
+}
+
+/* Mexican flag gradient for Lo Siento button */
+#mode-losiento {
+  background: linear-gradient(90deg, #006847 0%, #006847 33%, #ffffff 33%, #ffffff 66%, #ce1126 66%, #ce1126 100%);
+  color: #111827;
+  font-weight: 600;
+  text-shadow: 0 0 2px rgba(255,255,255,0.8);
+  border-color: #4b5563;
+}
+
+#mode-losiento:hover {
+  filter: brightness(1.1);
+  border-color: #6b7280;
+}
+
+#mode-losiento.mode-btn-active {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 2px #fbbf24, 0 0 10px rgba(251, 191, 36, 0.5);
+}
+
+/* Lo Siento Board Container */
+.losiento-board {
+  position: relative;
+  width: 800px;
+  height: 800px;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.losiento-board-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.losiento-highlights {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.losiento-pawns {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Highlight overlay for destination tiles - selectable (lighter grey) */
+.ls-highlight {
+  position: absolute;
+  width: 50px;
+  height: 50px;
+  background: rgba(128, 128, 128, 0.25);
+  border: 2px solid rgba(100, 100, 100, 0.4);
+  border-radius: 4px;
+  pointer-events: auto;
+  cursor: pointer;
+  animation: ls-highlight-pulse 2s ease-in-out infinite;
+  box-sizing: border-box;
+}
+
+.ls-highlight:hover {
+  background: rgba(100, 100, 100, 0.4);
+}
+
+/* Selected/landing destination - darker black */
+.ls-highlight-selected {
+  background: rgba(0, 0, 0, 0.5);
+  border-color: rgba(0, 0, 0, 0.7);
+  animation: none;
+}
+
+@keyframes ls-highlight-pulse {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
+}
+
+/* Pawn images */
+.ls-pawn {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  pointer-events: none;  /* Default: clicks pass through to tiles below */
+  cursor: default;
+  transition: filter 0.15s ease;
+  will-change: transform;
+  z-index: 10;
+}
+
+/* Interactive pawns intercept clicks */
+.ls-pawn-interactive {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* Base pawn image - ensure smooth transitions */
+.ls-pawn img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform: scale(1);
+  transition: transform 0.15s ease-out;
+}
+
+/* Selectable pawns - subtle size pulse on the image */
+.ls-pawn-legal img {
+  animation: ls-pawn-pulse-subtle 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Selected pawns - stronger size pulse on the image */
+.ls-pawn-selected {
+  z-index: 15;
+}
+.ls-pawn-selected img {
+  animation: ls-pawn-pulse-strong 0.9s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Target enemy pawns (selectable) - subtle pulse */
+.ls-pawn-target-selectable img {
+  animation: ls-pawn-pulse-subtle 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Target enemy pawns (selected) - strong pulse */
+.ls-pawn-target img {
+  animation: ls-pawn-pulse-strong 0.9s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Subtle size pulse for selectable pawns - smoother curve */
+@keyframes ls-pawn-pulse-subtle {
+  0% { 
+    transform: scale(1);
+  }
+  50% { 
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Strong size pulse for selected pawns - smoother curve */
+@keyframes ls-pawn-pulse-strong {
+  0% { 
+    transform: scale(1);
+  }
+  50% { 
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Stacked pawn counter */
+.ls-pawn-count {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 14px;
+  font-weight: 700;
+  color: #000;
+  text-shadow: 
+    -1px -1px 0 #fff,
+    1px -1px 0 #fff,
+    -1px 1px 0 #fff,
+    1px 1px 0 #fff;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Animation keyframes for pawn movement */
+
+/* Arching motion between tiles */
+@keyframes ls-arch-move {
+  0% {
+    transform: translate(var(--ls-start-x), var(--ls-start-y));
+  }
+  50% {
+    transform: translate(
+      calc((var(--ls-start-x) + var(--ls-end-x)) / 2),
+      calc((var(--ls-start-y) + var(--ls-end-y)) / 2 - 20px)
+    );
+  }
+  100% {
+    transform: translate(var(--ls-end-x), var(--ls-end-y));
+  }
+}
+
+.ls-pawn-arching {
+  animation: ls-arch-move var(--ls-duration, 150ms) ease-in-out forwards;
+}
+
+/* Sliding motion for slides */
+@keyframes ls-slide-move {
+  0% {
+    transform: translate(var(--ls-start-x), var(--ls-start-y));
+  }
+  100% {
+    transform: translate(var(--ls-end-x), var(--ls-end-y));
+  }
+}
+
+.ls-pawn-sliding {
+  animation: ls-slide-move var(--ls-duration, 80ms) linear forwards;
+}
+
+/* Knockout spin animation */
+@keyframes ls-knockout {
+  0% {
+    transform: translate(var(--ls-start-x), var(--ls-start-y)) rotate(0deg);
+  }
+  100% {
+    transform: translate(var(--ls-end-x), var(--ls-end-y)) rotate(720deg);
+  }
+}
+
+.ls-pawn-knockout {
+  animation: ls-knockout 600ms ease-in-out forwards;
+  z-index: 20;
+}
+
+/* Scale the board on smaller screens */
+@media (max-width: 860px) {
+  .losiento-board {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+  }
+  
+  .ls-highlight,
+  .ls-pawn {
+    /* Scale proportionally */
+    transform-origin: top left;
   }
 }

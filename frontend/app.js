@@ -55,12 +55,49 @@
   let lastShownGameId = null;
   // Card history is now server-side, so we just track what game we're showing
   let cardHistoryGameId = null;
+  // Track which card history entries have details expanded (by turn number)
+  let cardHistoryExpandedTurns = new Set();
   let autoplayBotEnabled = false;
   let autoplayTimeout = null;
   let autoplayPreferredOn = true;
   let lastPreviewGameId = null;
   let lastPreviewTurnNumber = null;
   let lastPreviewDiscardLength = null;
+
+  // Interface mode: 'basic' or 'losiento'
+  let interfaceMode = 'losiento';
+  
+  // Lo Siento mode DOM elements
+  const losientoBoardEl = document.getElementById('losiento-board');
+  const losientoHighlightsEl = document.getElementById('losiento-highlights');
+  const losientoPawnsEl = document.getElementById('losiento-pawns');
+  const modeBasicBtn = document.getElementById('mode-basic');
+  const modeLoSientoBtn = document.getElementById('mode-losiento');
+  
+  // Animation state for Lo Siento mode
+  let lsAnimationQueue = [];
+  let lsAnimating = false;
+
+  // Track grid constants and coordinate mapping (shared between basic and Lo Siento modes)
+  const TRACK_LEN = 60;
+  const BOARD_SIZE = 16;
+
+  function coordForTrackIndex(idx) {
+    const max = 15;
+    if (idx >= 0 && idx <= max) {
+      return { row: 0, col: idx };
+    }
+    if (idx >= 16 && idx <= 29) {
+      return { row: 1 + (idx - 16), col: max };
+    }
+    if (idx >= 30 && idx <= 45) {
+      return { row: max, col: max - (idx - 30) };
+    }
+    if (idx >= 46 && idx <= 59) {
+      return { row: max - 1 - (idx - 46), col: 0 };
+    }
+    return { row: 0, col: 0 };
+  }
 
   function showToast(message, millis = 2500) {
     toastEl.textContent = message;
@@ -230,6 +267,7 @@
       upcomingMoves = [];
       selectedMoveIndex = null;
       cardHistoryGameId = null;
+      cardHistoryExpandedTurns = new Set();
       lastPreviewGameId = null;
       lastPreviewTurnNumber = null;
       lastPreviewDiscardLength = null;
@@ -744,8 +782,17 @@
         moveStatusHtml =
           '<div class="game-card-move-status game-card-move-status-none">No available moves</div>';
       } else if (!hasSelectedMove) {
-        moveStatusHtml =
-          '<div class="game-card-move-status game-card-move-status-unselected">No move selected</div>';
+        if (onlySwitchMovesFor11 && selectedPawnId) {
+          // User has a pawn selected but chose "skip" for card 11
+          moveStatusHtml =
+            '<div class="game-card-move-status game-card-move-status-skip">Skip turn (click pawn to cycle moves)</div>';
+        } else if (onlySwitchMovesFor11) {
+          moveStatusHtml =
+            '<div class="game-card-move-status game-card-move-status-unselected">No move selected (optional – click pawn to pick a switch or skip)</div>';
+        } else {
+          moveStatusHtml =
+            '<div class="game-card-move-status game-card-move-status-unselected">No move selected</div>';
+        }
       }
     }
 
@@ -808,26 +855,7 @@
       autoplayBotBtn.title = amHost ? "" : "Only the host can control autoplay";
     }
 
-    // Track grid 0-59 laid out on a 16x16 outer ring
-    const TRACK_LEN = 60;
-    const BOARD_SIZE = 16;
-
-    function coordForTrackIndex(idx) {
-      const max = 15;
-      if (idx >= 0 && idx <= max) {
-        return { row: 0, col: idx };
-      }
-      if (idx >= 16 && idx <= 29) {
-        return { row: 1 + (idx - 16), col: max };
-      }
-      if (idx >= 30 && idx <= 45) {
-        return { row: max, col: max - (idx - 30) };
-      }
-      if (idx >= 46 && idx <= 59) {
-        return { row: max - 1 - (idx - 46), col: 0 };
-      }
-      return { row: 0, col: 0 };
-    }
+    // Track grid 0-59 laid out on a 16x16 outer ring (constants defined at module scope)
 
     const pawns = (state.board && state.board.pawns) || [];
 
@@ -850,7 +878,10 @@
     const SAFE_ZONE_LEN = 5;
 
     function firstSlideIndicesForSeat(seatIndex) {
-      const offset = (seatIndex % 4) * TRACK_SEGMENT_LEN;
+      // Map seats to board positions (rotated by 2):
+      // Seat 0 (Red) -> segment 30, Seat 1 (Blue) -> segment 45,
+      // Seat 2 (Yellow) -> segment 0, Seat 3 (Green) -> segment 15
+      const offset = ((seatIndex + 2) % 4) * TRACK_SEGMENT_LEN;
       const start = (offset + 1) % TRACK_LEN;
       const indices = [];
       for (let i = 0; i < FIRST_SLIDE_LEN; i++) {
@@ -871,11 +902,14 @@
     }
 
     function safetyDirectionForSeat(seatIndex) {
-      const normalized = seatIndex % 4;
-      if (normalized === 0) return { dr: 1, dc: 0 };
-      if (normalized === 1) return { dr: 0, dc: -1 };
-      if (normalized === 2) return { dr: -1, dc: 0 };
-      return { dr: 0, dc: 1 };
+      // Map seat index to board position (rotated by 2)
+      // Seat 0 (Red) -> bottom-right (up), Seat 1 (Blue) -> bottom-left (right)
+      // Seat 2 (Yellow) -> top-left (down), Seat 3 (Green) -> top-right (left)
+      const rotated = (seatIndex + 2) % 4;
+      if (rotated === 0) return { dr: 1, dc: 0 };   // top-left goes down
+      if (rotated === 1) return { dr: 0, dc: -1 };  // top-right goes left
+      if (rotated === 2) return { dr: -1, dc: 0 };  // bottom-right goes up
+      return { dr: 0, dc: 1 };                       // bottom-left goes right
     }
 
     const slideIndices = new Set();
@@ -1737,32 +1771,26 @@
                 }
               }
 
-              if (upcomingCard === "11" && onlySwitchMovesFor11) {
-                if (selectedPawnId === pawnId && selectedMoveIndex != null) {
-                  const selectedMove = findSelectedMove(movesArray, selectedMoveIndex);
-                  if (
-                    selectedMove &&
-                    selectedMove.pawnId === pawnId &&
-                    selectedMove.targetPawnId
-                  ) {
-                    selectedPawnId = null;
-                    selectedSecondaryPawnId = null;
-                    selectedMoveIndex = null;
-                    renderGame();
-                    return;
-                  }
-                }
-              }
-
-              // Default behavior for all other cards: clicking a legal mover
+              // Default behavior for all cards: clicking a legal mover
               // cycles through that pawn's available moves.
+              // For card 11 with only switch moves, include a "no move" option in the cycle.
               const candidates = movesArray.filter((m) => m.pawnId === pawnId);
               let chosen = null;
               if (candidates.length > 0) {
-                if (selectedPawnId === pawnId && selectedMoveIndex != null) {
-                  const currentIdx = candidates.findIndex((m) => m.index === selectedMoveIndex);
-                  const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
-                  chosen = candidates[nextIdx];
+                if (selectedPawnId === pawnId) {
+                  if (selectedMoveIndex != null) {
+                    const currentIdx = candidates.findIndex((m) => m.index === selectedMoveIndex);
+                    if (currentIdx >= 0 && currentIdx === candidates.length - 1 && onlySwitchMovesFor11) {
+                      // At the last move, cycle to "no move" for card 11 switch-only
+                      chosen = null;
+                    } else {
+                      const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
+                      chosen = candidates[nextIdx];
+                    }
+                  } else {
+                    // Currently at "no move", cycle to first move
+                    chosen = candidates[0];
+                  }
                 } else {
                   chosen = candidates[0];
                 }
@@ -1884,6 +1912,11 @@
       }
     }
 
+    // Render Lo Siento mode if active
+    if (interfaceMode === 'losiento') {
+      renderLoSientoBoard(state, colors, viewerSeatIndex, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat);
+    }
+
     // Use server-side card history
     if (cardHistoryEl) {
       let prevScrollTop = 0;
@@ -1948,21 +1981,26 @@
 
           const descText = getCardDescription(entry.card);
           if (descText) {
+            const turnKey = entry.turnNumber != null ? entry.turnNumber : null;
             const toggle = document.createElement("button");
             toggle.type = "button";
             toggle.className = "card-history-toggle";
             toggle.textContent = "Details";
 
             const descEl = document.createElement("div");
-            descEl.className = "card-history-desc hidden";
+            // Restore expanded state from the Set
+            const isExpanded = turnKey != null && cardHistoryExpandedTurns.has(turnKey);
+            descEl.className = isExpanded ? "card-history-desc" : "card-history-desc hidden";
             descEl.textContent = descText;
 
             toggle.addEventListener("click", () => {
               const isHidden = descEl.classList.contains("hidden");
               if (isHidden) {
                 descEl.classList.remove("hidden");
+                if (turnKey != null) cardHistoryExpandedTurns.add(turnKey);
               } else {
                 descEl.classList.add("hidden");
+                if (turnKey != null) cardHistoryExpandedTurns.delete(turnKey);
               }
             });
 
@@ -2242,9 +2280,829 @@
     }
   }
 
+  // ============================================
+  // ¡Lo Siento! Visual Mode Renderer
+  // ============================================
+
+  const LS_TILE_SIZE = 50;
+  const LS_PAWN_SIZE = 40;
+  const LS_BOARD_SIZE = 800;
+  
+  // Pawn visual offset to compensate for hat (move up and left)
+  const LS_PAWN_HAT_OFFSET_X = -3;
+  const LS_PAWN_HAT_OFFSET_Y = -5;
+
+  // Special positions for start circles and home stars (centers, in pixels)
+  // Board layout: Yellow=top-left, Green=top-right, Red=bottom-right, Blue=bottom-left
+  // Seat mapping: Seat 0=Red, Seat 1=Blue, Seat 2=Yellow, Seat 3=Green
+  // Start circles: 90px offset from start exit tile center (toward corner)
+  // Home stars: 125px offset from final safety tile center (toward center of board)
+  const LS_START_CENTERS = {
+    0: { x: 575, y: 705 },  // Red (seat 0)
+    1: { x: 95, y: 575 },   // Blue (seat 1)
+    2: { x: 225, y: 95 },   // Yellow (seat 2)
+    3: { x: 705, y: 225 },  // Green (seat 3)
+  };
+
+  const LS_HOME_CENTERS = {
+    0: { x: 675, y: 450 },  // Red home
+    1: { x: 350, y: 675 },  // Blue home
+    2: { x: 125, y: 350 },  // Yellow home
+    3: { x: 450, y: 125 },  // Green home
+  };
+
+  // Pawn spread offset for multiple pawns at start/home
+  // Distance from center for spread formations
+  const LS_SPREAD_OFFSET = 22;
+
+  // Get formation offsets for pawns based on count and seat position
+  // Formations rotate based on seat: 0=Red(bottom-right), 1=Blue(bottom-left), 2=Yellow(top-left), 3=Green(top-right)
+  function lsGetFormationOffsets(count, seatIndex) {
+    // Base formations (from Red's perspective - bottom-right corner)
+    // Triangle: 2 on top, 1 below
+    const d = LS_SPREAD_OFFSET;
+    
+    // Rotation angles: Red=0°, Blue=90°, Yellow=180°, Green=270°
+    const rotations = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2];
+    const rotation = rotations[seatIndex] || 0;
+    
+    const rotate = (x, y) => {
+      const cos = Math.cos(rotation);
+      const sin = Math.sin(rotation);
+      return {
+        x: Math.round(x * cos - y * sin),
+        y: Math.round(x * sin + y * cos)
+      };
+    };
+    
+    if (count === 1) {
+      return [{ x: 0, y: 0 }];
+    }
+    
+    if (count === 2) {
+      // Line: horizontal from Red's view
+      return [
+        rotate(-d * 0.7, 0),
+        rotate(d * 0.7, 0)
+      ];
+    }
+    
+    if (count === 3) {
+      // Triangle: 2 on top, 1 below (from Red's view: 2 above, 1 below)
+      return [
+        rotate(-d * 0.7, -d * 0.5),  // top-left
+        rotate(d * 0.7, -d * 0.5),   // top-right
+        rotate(0, d * 0.7)           // bottom center
+      ];
+    }
+    
+    if (count === 4) {
+      // Square formation
+      return [
+        rotate(-d * 0.6, -d * 0.6),  // top-left
+        rotate(d * 0.6, -d * 0.6),   // top-right
+        rotate(-d * 0.6, d * 0.6),   // bottom-left
+        rotate(d * 0.6, d * 0.6)     // bottom-right
+      ];
+    }
+    
+    // Fallback: stack at center
+    return Array(count).fill({ x: 0, y: 0 });
+  }
+
+  // Convert track index to pixel position (top-left of tile)
+  function lsTrackIndexToPixel(trackIndex) {
+    const coord = coordForTrackIndex(trackIndex);
+    if (!coord) return { x: 0, y: 0 };
+    return {
+      x: coord.col * LS_TILE_SIZE,
+      y: coord.row * LS_TILE_SIZE
+    };
+  }
+
+  // Convert safety zone position to pixel position
+  function lsSafetyToPixel(seatIndex, safetyIndex, safetyCoordsBySeat) {
+    const coords = safetyCoordsBySeat[seatIndex];
+    if (!coords || !coords[safetyIndex]) return { x: 0, y: 0 };
+    const coord = coords[safetyIndex];
+    return {
+      x: coord.col * LS_TILE_SIZE,
+      y: coord.row * LS_TILE_SIZE
+    };
+  }
+
+  // Get center position for a pawn given its position type
+  // Includes hat offset to visually center the pawn body (not the hat)
+  function lsGetPawnCenter(position, seatIndex, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat) {
+    if (!position) return { x: 0, y: 0 };
+    
+    const pawnOffset = (LS_TILE_SIZE - LS_PAWN_SIZE) / 2;
+    const hatX = LS_PAWN_HAT_OFFSET_X;
+    const hatY = LS_PAWN_HAT_OFFSET_Y;
+    
+    if (position.type === 'start') {
+      // Use the larger start circle center
+      const center = LS_START_CENTERS[seatIndex];
+      if (center) {
+        return { x: center.x - LS_PAWN_SIZE / 2 + hatX, y: center.y - LS_PAWN_SIZE / 2 + hatY };
+      }
+      // Fallback to start home coord
+      const startHome = startHomeCoordBySeat[seatIndex];
+      if (startHome) {
+        return {
+          x: startHome.col * LS_TILE_SIZE + pawnOffset + hatX,
+          y: startHome.row * LS_TILE_SIZE + pawnOffset + hatY
+        };
+      }
+    }
+    
+    if (position.type === 'home') {
+      // Use the larger home star center
+      const center = LS_HOME_CENTERS[seatIndex];
+      if (center) {
+        return { x: center.x - LS_PAWN_SIZE / 2 + hatX, y: center.y - LS_PAWN_SIZE / 2 + hatY };
+      }
+      // Fallback to home coord
+      const home = homeCoordBySeat[seatIndex];
+      if (home) {
+        return {
+          x: home.col * LS_TILE_SIZE + pawnOffset + hatX,
+          y: home.row * LS_TILE_SIZE + pawnOffset + hatY
+        };
+      }
+    }
+    
+    if (position.type === 'track') {
+      const pixel = lsTrackIndexToPixel(position.index || 0);
+      return {
+        x: pixel.x + pawnOffset + hatX,
+        y: pixel.y + pawnOffset + hatY
+      };
+    }
+    
+    if (position.type === 'safety') {
+      const pixel = lsSafetyToPixel(seatIndex, position.index || 0, safetyCoordsBySeat);
+      return {
+        x: pixel.x + pawnOffset + hatX,
+        y: pixel.y + pawnOffset + hatY
+      };
+    }
+    
+    return { x: 0, y: 0 };
+  }
+
+  // Get pawn image source based on color
+  function lsGetPawnImage(color) {
+    const colorMap = {
+      red: 'assets/pawn-red.png',
+      blue: 'assets/pawn-blue.png',
+      yellow: 'assets/pawn-yellow.png',
+      green: 'assets/pawn-green.png'
+    };
+    return colorMap[color] || colorMap.red;
+  }
+
+  // Toggle interface mode
+  function setInterfaceMode(mode) {
+    interfaceMode = mode;
+    
+    if (mode === 'basic') {
+      trackGridEl.classList.remove('hidden');
+      if (losientoBoardEl) losientoBoardEl.classList.add('hidden');
+      if (modeBasicBtn) modeBasicBtn.classList.add('mode-btn-active');
+      if (modeLoSientoBtn) modeLoSientoBtn.classList.remove('mode-btn-active');
+    } else {
+      trackGridEl.classList.add('hidden');
+      if (losientoBoardEl) losientoBoardEl.classList.remove('hidden');
+      if (modeBasicBtn) modeBasicBtn.classList.remove('mode-btn-active');
+      if (modeLoSientoBtn) modeLoSientoBtn.classList.add('mode-btn-active');
+    }
+    
+    // Re-render the game in the new mode
+    if (currentGame && currentGame.phase === 'active') {
+      renderGame();
+    }
+  }
+
+  // Render the Lo Siento board
+  function renderLoSientoBoard(gameState, colors, viewerSeatIndex, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat) {
+    if (!losientoPawnsEl || !losientoHighlightsEl) return;
+    
+    losientoPawnsEl.innerHTML = '';
+    losientoHighlightsEl.innerHTML = '';
+    
+    if (!gameState || !gameState.board) return;
+    
+    const pawns = gameState.board.pawns || [];
+    const seats = currentGame.seats || [];
+    const isActive = gameState.result === 'active';
+    
+    // Group pawns by position for stacking
+    const pawnsByPosition = new Map();
+    
+    pawns.forEach(pawn => {
+      const pos = pawn.position;
+      if (!pos) return;
+      
+      let key;
+      if (pos.type === 'start') {
+        key = `start-${pawn.seatIndex}`;
+      } else if (pos.type === 'home') {
+        key = `home-${pawn.seatIndex}`;
+      } else if (pos.type === 'track') {
+        key = `track-${pos.index}`;
+      } else if (pos.type === 'safety') {
+        key = `safety-${pawn.seatIndex}-${pos.index}`;
+      } else {
+        return;
+      }
+      
+      if (!pawnsByPosition.has(key)) {
+        pawnsByPosition.set(key, []);
+      }
+      pawnsByPosition.get(key).push(pawn);
+    });
+    
+    // Render pawns
+    pawnsByPosition.forEach((pawnsAtPos, key) => {
+      if (pawnsAtPos.length === 0) return;
+      
+      const firstPawn = pawnsAtPos[0];
+      const seatIndex = firstPawn.seatIndex;
+      const color = colors[seatIndex] || 'red';
+      const pos = firstPawn.position;
+      
+      const baseCenter = lsGetPawnCenter(pos, seatIndex, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat);
+      
+      // Check if this is a start or home position (spread out multiple pawns)
+      const isStartOrHome = pos.type === 'start' || pos.type === 'home';
+      
+      if (isStartOrHome && pawnsAtPos.length > 1) {
+        // Spread pawns in formation
+        const offsets = lsGetFormationOffsets(pawnsAtPos.length, seatIndex);
+        
+        // Build pawn elements with their Y positions for sorting
+        const pawnElements = pawnsAtPos.map((pawn, idx) => {
+          const offset = offsets[idx] || { x: 0, y: 0 };
+          const finalY = baseCenter.y + offset.y;
+          
+          const pawnEl = document.createElement('div');
+          pawnEl.className = 'ls-pawn';
+          pawnEl.dataset.pawnId = pawn.pawnId;
+          pawnEl.style.transform = `translate(${baseCenter.x + offset.x}px, ${finalY}px)`;
+          
+          const img = document.createElement('img');
+          img.src = lsGetPawnImage(color);
+          img.alt = `${color} pawn`;
+          img.draggable = false;
+          pawnEl.appendChild(img);
+          
+          // Check if any pawn at this position is a legal mover (for start, any can be clicked)
+          const anyLegalMover = pawnsAtPos.some(p => legalMoverPawnIds && legalMoverPawnIds.has(p.pawnId));
+          const isSelected = pawnsAtPos.some(p => selectedPawnId === p.pawnId);
+          
+          if (anyLegalMover) {
+            pawnEl.classList.add('ls-pawn-legal');
+            pawnEl.classList.add('ls-pawn-interactive');
+            // Click any pawn in formation to select one (use first legal mover)
+            pawnEl.addEventListener('click', () => {
+              const legalPawn = pawnsAtPos.find(p => legalMoverPawnIds && legalMoverPawnIds.has(p.pawnId)) || pawn;
+              handleLoSientoPawnClick(legalPawn, pawnsAtPos, true, false);
+            });
+          }
+          if (isSelected) {
+            pawnEl.classList.add('ls-pawn-selected');
+          }
+          
+          return { el: pawnEl, y: finalY };
+        });
+        
+        // Sort by Y position (lower Y first, so higher Y renders last and appears on top)
+        // This ensures bottom pawns' hats overlap top pawns
+        pawnElements.sort((a, b) => a.y - b.y);
+        pawnElements.forEach(({ el }) => losientoPawnsEl.appendChild(el));
+        
+        return; // Skip the single-pawn rendering below
+      }
+      
+      // Single pawn or non-start/home position
+      const center = baseCenter;
+      const pawnEl = document.createElement('div');
+      pawnEl.className = 'ls-pawn';
+      pawnEl.dataset.pawnId = firstPawn.pawnId;
+      pawnEl.style.transform = `translate(${center.x}px, ${center.y}px)`;
+      
+      const img = document.createElement('img');
+      img.src = lsGetPawnImage(color);
+      img.alt = `${color} pawn`;
+      img.draggable = false;
+      pawnEl.appendChild(img);
+      
+      // Check if this pawn is a legal mover
+      const isLegalMover = legalMoverPawnIds && legalMoverPawnIds.has(firstPawn.pawnId);
+      const isSelected = selectedPawnId === firstPawn.pawnId;
+      const isSecondarySelected = selectedSecondaryPawnId === firstPawn.pawnId;
+      
+      // Check if this is a target pawn (for Sorry! or 11 switch)
+      let isTarget = false;
+      if (selectedMoveIndex != null && upcomingMoves) {
+        const selectedMove = upcomingMoves.find(m => m.index === selectedMoveIndex);
+        if (selectedMove && selectedMove.targetPawnId === firstPawn.pawnId) {
+          isTarget = true;
+        }
+      }
+      
+      if (isLegalMover) {
+        pawnEl.classList.add('ls-pawn-legal');
+      }
+      if (isSelected || isSecondarySelected) {
+        pawnEl.classList.add('ls-pawn-selected');
+      }
+      if (isTarget) {
+        pawnEl.classList.add('ls-pawn-target');
+      }
+      
+      // Add click handler for legal movers
+      if (isLegalMover || isTarget) {
+        pawnEl.classList.add('ls-pawn-interactive');
+        pawnEl.addEventListener('click', () => {
+          handleLoSientoPawnClick(firstPawn, pawnsAtPos, isLegalMover, isTarget);
+        });
+      }
+      
+      // Also check if this is a Sorry!/11 target that hasn't been selected yet
+      if (isActive && !isLegalMover && selectedPawnId && (upcomingCard === 'Sorry!' || upcomingCard === '11')) {
+        const currentSeatIndex = gameState.currentSeatIndex;
+        const isOpponentPawn = seatIndex !== currentSeatIndex;
+        if (isOpponentPawn) {
+          const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+          const hasTargetMove = movesArray.some(m => 
+            m.pawnId === selectedPawnId && m.targetPawnId === firstPawn.pawnId
+          );
+          if (hasTargetMove) {
+            pawnEl.classList.add('ls-pawn-target-selectable');
+            pawnEl.classList.add('ls-pawn-interactive');
+            pawnEl.addEventListener('click', () => {
+              const move = movesArray.find(m => 
+                m.pawnId === selectedPawnId && m.targetPawnId === firstPawn.pawnId
+              );
+              if (move && typeof move.index === 'number') {
+                selectedMoveIndex = move.index;
+                renderGame();
+              }
+            });
+          }
+        }
+      }
+      
+      losientoPawnsEl.appendChild(pawnEl);
+    });
+    
+    // Render destination highlights for selected pawn (all cards)
+    if (isActive && selectedPawnId) {
+      renderLoSientoDestHighlights(gameState, colors, safetyCoordsBySeat, homeCoordBySeat);
+    }
+  }
+
+  // Handle pawn click in Lo Siento mode
+  function handleLoSientoPawnClick(pawn, pawnsAtPos, isLegalMover, isTarget) {
+    const pawnId = pawn.pawnId;
+    const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+    
+    // For target clicks (Sorry! or 11 switch)
+    if (isTarget && selectedPawnId) {
+      const move = movesArray.find(m => 
+        m.pawnId === selectedPawnId && m.targetPawnId === pawnId
+      );
+      if (move && typeof move.index === 'number') {
+        selectedMoveIndex = move.index;
+        renderGame();
+        return;
+      }
+    }
+    
+    // For Sorry!, clicking your own Start pawn arms the move
+    if (upcomingCard === 'Sorry!') {
+      selectedPawnId = pawnId;
+      selectedMoveIndex = null;
+      renderGame();
+      return;
+    }
+    
+    // Card 7 UI behavior
+    if (upcomingCard === '7') {
+      if (!selectedPawnId) {
+        selectedPawnId = pawnId;
+        selectedSecondaryPawnId = null;
+        selectedMoveIndex = null;
+        renderGame();
+        return;
+      }
+      
+      if (selectedPawnId && !selectedSecondaryPawnId) {
+        if (pawnId === selectedPawnId) return;
+        
+        const hasSplitWithThisPair = movesArray.some(m =>
+          (m.pawnId === selectedPawnId && m.secondaryPawnId === pawnId) ||
+          (m.pawnId === pawnId && m.secondaryPawnId === selectedPawnId)
+        );
+        
+        if (hasSplitWithThisPair) {
+          selectedSecondaryPawnId = pawnId;
+          selectedMoveIndex = null;
+          renderGame();
+          return;
+        }
+        
+        selectedPawnId = pawnId;
+        selectedSecondaryPawnId = null;
+        selectedMoveIndex = null;
+        renderGame();
+        return;
+      }
+      
+      if (selectedPawnId && selectedSecondaryPawnId) {
+        if (pawnId === selectedPawnId || pawnId === selectedSecondaryPawnId) {
+          selectedPawnId = pawnId;
+          selectedSecondaryPawnId = null;
+          selectedMoveIndex = null;
+          renderGame();
+          return;
+        }
+        
+        const newPrimary = selectedSecondaryPawnId;
+        const newSecondary = pawnId;
+        
+        const hasSplitWithNewPair = movesArray.some(m =>
+          (m.pawnId === newPrimary && m.secondaryPawnId === newSecondary) ||
+          (m.pawnId === newSecondary && m.secondaryPawnId === newPrimary)
+        );
+        
+        if (hasSplitWithNewPair) {
+          selectedPawnId = newPrimary;
+          selectedSecondaryPawnId = newSecondary;
+          selectedMoveIndex = null;
+          renderGame();
+          return;
+        }
+        
+        selectedPawnId = pawnId;
+        selectedSecondaryPawnId = null;
+        selectedMoveIndex = null;
+        renderGame();
+        return;
+      }
+    }
+    
+    // Default behavior: cycle through pawn's available moves
+    // For card 11 with only switch moves, include a "no move" option in the cycle.
+    const onlySwitchMovesFor11 =
+      upcomingCard === '11' &&
+      movesArray.length > 0 &&
+      !movesArray.some(m => m.direction === 'forward' && m.steps === 11);
+    
+    const candidates = movesArray.filter(m => m.pawnId === pawnId);
+    let chosen = null;
+    if (candidates.length > 0) {
+      if (selectedPawnId === pawnId) {
+        if (selectedMoveIndex != null) {
+          const currentIdx = candidates.findIndex(m => m.index === selectedMoveIndex);
+          if (currentIdx >= 0 && currentIdx === candidates.length - 1 && onlySwitchMovesFor11) {
+            // At the last move, cycle to "no move" for card 11 switch-only
+            chosen = null;
+          } else {
+            const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
+            chosen = candidates[nextIdx];
+          }
+        } else {
+          // Currently at "no move", cycle to first move
+          chosen = candidates[0];
+        }
+      } else {
+        chosen = candidates[0];
+      }
+    }
+    selectedPawnId = pawnId;
+    selectedMoveIndex = chosen ? chosen.index : null;
+    renderGame();
+  }
+
+  // Render destination highlights for card 7, 10, 11, Sorry!
+  function renderLoSientoDestHighlights(gameState, colors, safetyCoordsBySeat, homeCoordBySeat) {
+    if (!losientoHighlightsEl || !selectedPawnId) return;
+    
+    const movesArray = Array.isArray(upcomingMoves) ? upcomingMoves : [];
+    const pawnOffset = (LS_TILE_SIZE - LS_PAWN_SIZE) / 2;
+    
+    // Get pawns from game state for looking up target pawn positions
+    const pawns = (gameState.board && gameState.board.pawns) || [];
+    const pawnById = new Map();
+    pawns.forEach(p => {
+      if (p && p.pawnId) pawnById.set(p.pawnId, p);
+    });
+    
+    // Find all unique destination tiles for the selected pawn
+    const destTiles = new Set();
+    
+    movesArray.forEach(move => {
+      let matchesPawn = false;
+      let destKey = null;
+      
+      if (upcomingCard === '7') {
+        if (selectedSecondaryPawnId) {
+          // Split-7 with explicit pair
+          if ((move.pawnId === selectedPawnId && move.secondaryPawnId === selectedSecondaryPawnId) ||
+              (move.pawnId === selectedSecondaryPawnId && move.secondaryPawnId === selectedPawnId)) {
+            matchesPawn = true;
+            // Add both destinations
+            if (move.logicalDestType === 'track' && typeof move.logicalDestIndex === 'number') {
+              destTiles.add(`track-${move.logicalDestIndex}`);
+            }
+            if (move.logicalDestType === 'safety' && typeof move.logicalDestIndex === 'number') {
+              destTiles.add(`safety-${gameState.currentSeatIndex}-${move.logicalDestIndex}`);
+            }
+            if (move.logicalDestType === 'home') {
+              destTiles.add(`home-${gameState.currentSeatIndex}`);
+            }
+            if (move.secondaryLogicalDestType === 'track' && typeof move.secondaryLogicalDestIndex === 'number') {
+              destTiles.add(`track-${move.secondaryLogicalDestIndex}`);
+            }
+            if (move.secondaryLogicalDestType === 'safety' && typeof move.secondaryLogicalDestIndex === 'number') {
+              destTiles.add(`safety-${gameState.currentSeatIndex}-${move.secondaryLogicalDestIndex}`);
+            }
+            if (move.secondaryLogicalDestType === 'home') {
+              destTiles.add(`home-${gameState.currentSeatIndex}`);
+            }
+          }
+        } else {
+          // Single pawn selected for 7
+          if (move.pawnId === selectedPawnId) {
+            if (move.logicalDestType === 'track' && typeof move.logicalDestIndex === 'number') {
+              destTiles.add(`track-${move.logicalDestIndex}`);
+            }
+            if (move.logicalDestType === 'safety' && typeof move.logicalDestIndex === 'number') {
+              destTiles.add(`safety-${gameState.currentSeatIndex}-${move.logicalDestIndex}`);
+            }
+            if (move.logicalDestType === 'home') {
+              destTiles.add(`home-${gameState.currentSeatIndex}`);
+            }
+          }
+          if (move.secondaryPawnId === selectedPawnId) {
+            if (move.secondaryLogicalDestType === 'track' && typeof move.secondaryLogicalDestIndex === 'number') {
+              destTiles.add(`track-${move.secondaryLogicalDestIndex}`);
+            }
+            if (move.secondaryLogicalDestType === 'safety' && typeof move.secondaryLogicalDestIndex === 'number') {
+              destTiles.add(`safety-${gameState.currentSeatIndex}-${move.secondaryLogicalDestIndex}`);
+            }
+            if (move.secondaryLogicalDestType === 'home') {
+              destTiles.add(`home-${gameState.currentSeatIndex}`);
+            }
+          }
+        }
+      } else {
+        // Cards 10, 11, and Sorry!
+        if (move.pawnId === selectedPawnId) {
+          if (move.logicalDestType === 'track' && typeof move.logicalDestIndex === 'number') {
+            destTiles.add(`track-${move.logicalDestIndex}`);
+          }
+          if (move.logicalDestType === 'safety' && typeof move.logicalDestIndex === 'number') {
+            destTiles.add(`safety-${gameState.currentSeatIndex}-${move.logicalDestIndex}`);
+          }
+          if (move.logicalDestType === 'home') {
+            destTiles.add(`home-${gameState.currentSeatIndex}`);
+          }
+          
+          // For card 11 switch or Sorry! bump, highlight the target pawn's current tile
+          if (move.targetPawnId && (upcomingCard === '11' || upcomingCard === 'Sorry!')) {
+            const targetPawn = pawnById.get(move.targetPawnId);
+            if (targetPawn && targetPawn.position) {
+              const pos = targetPawn.position;
+              if (pos.type === 'track' && typeof pos.index === 'number') {
+                destTiles.add(`target-track-${pos.index}-${move.targetPawnId}`);
+              }
+            }
+          }
+        }
+      }
+    });
+    
+    // Create highlight elements for each destination
+    destTiles.forEach(destKey => {
+      const parts = destKey.split('-');
+      const type = parts[0];
+      let x = 0, y = 0;
+      
+      if (type === 'track') {
+        const trackIndex = parseInt(parts[1], 10);
+        const pixel = lsTrackIndexToPixel(trackIndex);
+        x = pixel.x;
+        y = pixel.y;
+      } else if (type === 'target') {
+        // Target pawn tile for 11 switch or Sorry! bump: target-track-<index>-<pawnId>
+        const trackIndex = parseInt(parts[2], 10);
+        const pixel = lsTrackIndexToPixel(trackIndex);
+        x = pixel.x;
+        y = pixel.y;
+      } else if (type === 'safety') {
+        const seatIdx = parseInt(parts[1], 10);
+        const safetyIdx = parseInt(parts[2], 10);
+        const coords = safetyCoordsBySeat[seatIdx];
+        if (coords && coords[safetyIdx]) {
+          x = coords[safetyIdx].col * LS_TILE_SIZE;
+          y = coords[safetyIdx].row * LS_TILE_SIZE;
+        }
+      } else if (type === 'home') {
+        const seatIdx = parseInt(parts[1], 10);
+        const homeCoord = homeCoordBySeat[seatIdx];
+        if (homeCoord) {
+          x = homeCoord.col * LS_TILE_SIZE;
+          y = homeCoord.row * LS_TILE_SIZE;
+        }
+      }
+      
+      const highlight = document.createElement('div');
+      highlight.className = 'ls-highlight';
+      highlight.style.left = `${x}px`;
+      highlight.style.top = `${y}px`;
+      
+      // Check if this is the selected destination
+      if (selectedMoveIndex != null) {
+        const selectedMove = movesArray.find(m => m.index === selectedMoveIndex);
+        if (selectedMove) {
+          let isSelectedDest = false;
+          // Primary destination checks
+          if (type === 'track' && selectedMove.logicalDestType === 'track' && 
+              selectedMove.logicalDestIndex === parseInt(parts[1], 10)) {
+            isSelectedDest = true;
+          }
+          if (type === 'target' && selectedMove.targetPawnId === parts[3]) {
+            // Target pawn tile is selected if move's targetPawnId matches
+            isSelectedDest = true;
+          }
+          if (type === 'safety' && selectedMove.logicalDestType === 'safety' &&
+              selectedMove.logicalDestIndex === parseInt(parts[2], 10)) {
+            isSelectedDest = true;
+          }
+          if (type === 'home' && selectedMove.logicalDestType === 'home') {
+            isSelectedDest = true;
+          }
+          // Secondary destination checks for card 7 split moves
+          if (type === 'track' && selectedMove.secondaryLogicalDestType === 'track' &&
+              selectedMove.secondaryLogicalDestIndex === parseInt(parts[1], 10)) {
+            isSelectedDest = true;
+          }
+          if (type === 'safety' && selectedMove.secondaryLogicalDestType === 'safety' &&
+              selectedMove.secondaryLogicalDestIndex === parseInt(parts[2], 10)) {
+            isSelectedDest = true;
+          }
+          if (type === 'home' && selectedMove.secondaryLogicalDestType === 'home') {
+            isSelectedDest = true;
+          }
+          if (isSelectedDest) {
+            highlight.classList.add('ls-highlight-selected');
+          }
+        }
+      }
+      
+      // Add click handler
+      highlight.addEventListener('click', () => {
+        handleLoSientoDestClick(destKey, movesArray, gameState);
+      });
+      
+      losientoHighlightsEl.appendChild(highlight);
+    });
+  }
+
+  // Handle destination tile click in Lo Siento mode
+  function handleLoSientoDestClick(destKey, movesArray, gameState) {
+    const parts = destKey.split('-');
+    const type = parts[0];
+    
+    let candidates = [];
+    
+    if (upcomingCard === '7') {
+      if (selectedSecondaryPawnId) {
+        // Split-7 with explicit pair
+        candidates = movesArray.filter(m => {
+          const isPair = (m.pawnId === selectedPawnId && m.secondaryPawnId === selectedSecondaryPawnId) ||
+                        (m.pawnId === selectedSecondaryPawnId && m.secondaryPawnId === selectedPawnId);
+          if (!isPair) return false;
+          
+          if (type === 'track') {
+            const idx = parseInt(parts[1], 10);
+            return (m.logicalDestType === 'track' && m.logicalDestIndex === idx) ||
+                   (m.secondaryLogicalDestType === 'track' && m.secondaryLogicalDestIndex === idx);
+          }
+          if (type === 'safety') {
+            const safetyIdx = parseInt(parts[2], 10);
+            return (m.logicalDestType === 'safety' && m.logicalDestIndex === safetyIdx) ||
+                   (m.secondaryLogicalDestType === 'safety' && m.secondaryLogicalDestIndex === safetyIdx);
+          }
+          if (type === 'home') {
+            return m.logicalDestType === 'home' || m.secondaryLogicalDestType === 'home';
+          }
+          return false;
+        });
+      } else {
+        // Single pawn for 7
+        candidates = movesArray.filter(m => {
+          const involvesPawn = m.pawnId === selectedPawnId || m.secondaryPawnId === selectedPawnId;
+          if (!involvesPawn) return false;
+          
+          if (type === 'track') {
+            const idx = parseInt(parts[1], 10);
+            if (m.pawnId === selectedPawnId && m.logicalDestType === 'track' && m.logicalDestIndex === idx) return true;
+            if (m.secondaryPawnId === selectedPawnId && m.secondaryLogicalDestType === 'track' && m.secondaryLogicalDestIndex === idx) return true;
+          }
+          if (type === 'safety') {
+            const safetyIdx = parseInt(parts[2], 10);
+            if (m.pawnId === selectedPawnId && m.logicalDestType === 'safety' && m.logicalDestIndex === safetyIdx) return true;
+            if (m.secondaryPawnId === selectedPawnId && m.secondaryLogicalDestType === 'safety' && m.secondaryLogicalDestIndex === safetyIdx) return true;
+          }
+          if (type === 'home') {
+            if (m.pawnId === selectedPawnId && m.logicalDestType === 'home') return true;
+            if (m.secondaryPawnId === selectedPawnId && m.secondaryLogicalDestType === 'home') return true;
+          }
+          return false;
+        });
+      }
+    } else {
+      // Cards 10, 11, and Sorry!
+      candidates = movesArray.filter(m => {
+        if (m.pawnId !== selectedPawnId) return false;
+        
+        if (type === 'track') {
+          const idx = parseInt(parts[1], 10);
+          return m.logicalDestType === 'track' && m.logicalDestIndex === idx;
+        }
+        if (type === 'target') {
+          // Click on target pawn tile for 11 switch or Sorry! bump
+          const targetPawnId = parts[3];
+          return m.targetPawnId === targetPawnId;
+        }
+        if (type === 'safety') {
+          const safetyIdx = parseInt(parts[2], 10);
+          return m.logicalDestType === 'safety' && m.logicalDestIndex === safetyIdx;
+        }
+        if (type === 'home') {
+          return m.logicalDestType === 'home';
+        }
+        return false;
+      });
+    }
+    
+    if (candidates.length === 0) return;
+    
+    // Check if clicking the same destination tile as currently selected
+    let clickingSameDestination = false;
+    if (selectedMoveIndex != null) {
+      const currentMove = movesArray.find(m => m.index === selectedMoveIndex);
+      if (currentMove) {
+        if (type === 'track' && currentMove.logicalDestType === 'track' && 
+            currentMove.logicalDestIndex === parseInt(parts[1], 10)) {
+          clickingSameDestination = true;
+        }
+        if (type === 'target' && currentMove.targetPawnId === parts[3]) {
+          clickingSameDestination = true;
+        }
+        if (type === 'safety' && currentMove.logicalDestType === 'safety' &&
+            currentMove.logicalDestIndex === parseInt(parts[2], 10)) {
+          clickingSameDestination = true;
+        }
+        if (type === 'home' && currentMove.logicalDestType === 'home') {
+          clickingSameDestination = true;
+        }
+      }
+    }
+    
+    // Cycle through candidates only if clicking same destination tile
+    let chosen = null;
+    if (clickingSameDestination && candidates.length > 1) {
+      const currentIdx = candidates.findIndex(m => m.index === selectedMoveIndex);
+      const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % candidates.length : 0;
+      chosen = candidates[nextIdx];
+    } else {
+      // Different tile or first selection - just pick the first candidate
+      chosen = candidates[0];
+    }
+    
+    if (chosen && typeof chosen.index === 'number') {
+      selectedMoveIndex = chosen.index;
+      renderGame();
+    }
+  }
+
   function init() {
     hostForm.addEventListener("submit", handleHostSubmit);
     refreshJoinableBtn.addEventListener("click", refreshJoinable);
+    
+    // Interface mode toggle handlers
+    if (modeBasicBtn) {
+      modeBasicBtn.addEventListener('click', () => setInterfaceMode('basic'));
+    }
+    if (modeLoSientoBtn) {
+      modeLoSientoBtn.addEventListener('click', () => setInterfaceMode('losiento'));
+    }
 
     startGameBtn.addEventListener("click", handleStartGame);
     leaveLobbyBtn.addEventListener("click", handleLeave);

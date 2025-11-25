@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Lo Siento</title>
+    <title>¡Lo Siento!</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -54,7 +54,6 @@
             <div class="game-left">
               <div class="game-right-top">
                 <button id="leave-game">Leave game</button>
-                <button id="autoplay-bot">Autoplay bot turns</button>
               </div>
               <div class="game-card-panel">
                 <div id="game-card" class="game-card-surface"></div>
@@ -62,10 +61,19 @@
               <div class="card">
                 <div id="game-status-pills"></div>
               </div>
+              <div class="interface-toggle-left">
+                <button id="mode-basic" class="mode-btn">Basic Interface</button>
+                <button id="mode-losiento" class="mode-btn mode-btn-active">¡Lo Siento!</button>
+              </div>
             </div>
             <div class="game-middle">
               <div class="board-panel">
-                <div id="track-grid" class="track-grid"></div>
+                <div id="track-grid" class="track-grid hidden"></div>
+                <div id="losiento-board" class="losiento-board">
+                  <img src="assets/board.png" alt="¡Lo Siento! Board" class="losiento-board-bg" />
+                  <div id="losiento-highlights" class="losiento-highlights"></div>
+                  <div id="losiento-pawns" class="losiento-pawns"></div>
+                </div>
               </div>
             </div>
             <div class="game-right">
@@ -76,6 +84,7 @@
                 <div class="game-top-turn">
                   <div id="turn-blurb" class="turn-blurb"></div>
                 </div>
+                <button id="autoplay-bot">Autoplay bot turns</button>
               </div>
               <div class="card">
                 <h3>Card history</h3>

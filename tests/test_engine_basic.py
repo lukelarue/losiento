@@ -367,6 +367,97 @@ class EngineBasicTests(unittest.TestCase):
             (pawn_b.position.kind, pawn_b.position.index),
         )
 
+    def test_card7_split_applies_slide_to_secondary_pawn(self) -> None:
+        """7-split move where secondary pawn lands on opponent's slide should slide."""
+        state, _, _ = self._make_basic_state()
+
+        # Get blue's (seat 1) first slide indices
+        blue_slide = first_slide_indices(1)  # [46, 47, 48, 49]
+        slide_start = blue_slide[0]
+        slide_end = blue_slide[-1]
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawn_a = pawns0[0]
+        pawn_b = pawns0[1]
+
+        # Place pawn_a far enough that a 1-step won't interfere
+        pawn_a.position = PawnPosition(kind="track", index=0)
+        # Place pawn_b 1 step before blue's slide start
+        pawn_b.position = PawnPosition(kind="track", index=(slide_start - 1) % TRACK_LEN)
+
+        moves = get_legal_moves(state, seat_index=0, card="7")
+
+        # Find a 7-split move where pawn_a moves 6 and pawn_b moves 1
+        # (landing on blue's slide start)
+        target_move = None
+        for m in moves:
+            if (m.pawn_id == pawn_a.pawn_id and m.secondary_pawn_id == pawn_b.pawn_id
+                    and m.steps == 6 and m.secondary_steps == 1):
+                target_move = m
+                break
+            if (m.pawn_id == pawn_b.pawn_id and m.secondary_pawn_id == pawn_a.pawn_id
+                    and m.steps == 1 and m.secondary_steps == 6):
+                target_move = m
+                break
+
+        self.assertIsNotNone(target_move, "expected a 7-split move landing on blue's slide")
+
+        new_state = apply_move(state, target_move)
+
+        # Find which pawn moved 1 step (should have landed on slide and slid to end)
+        if target_move.pawn_id == pawn_b.pawn_id and target_move.steps == 1:
+            slider = next(p for p in new_state.pawns if p.pawn_id == pawn_b.pawn_id)
+        else:
+            slider = next(p for p in new_state.pawns if p.pawn_id == pawn_b.pawn_id)
+
+        # The pawn should have slid to the end of blue's slide
+        self.assertEqual(slider.position.kind, "track")
+        self.assertEqual(
+            slider.position.index, slide_end,
+            f"pawn should have slid to {slide_end} but is at {slider.position.index}"
+        )
+
+    def test_card7_split_applies_slide_to_primary_pawn(self) -> None:
+        """7-split move where primary pawn lands on opponent's slide should slide."""
+        state, _, _ = self._make_basic_state()
+
+        # Get blue's (seat 1) first slide indices
+        blue_slide = first_slide_indices(1)  # [46, 47, 48, 49]
+        slide_start = blue_slide[0]
+        slide_end = blue_slide[-1]
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawn_a = pawns0[0]
+        pawn_b = pawns0[1]
+
+        # Place pawn_a 1 step before blue's slide start
+        pawn_a.position = PawnPosition(kind="track", index=(slide_start - 1) % TRACK_LEN)
+        # Place pawn_b far enough away
+        pawn_b.position = PawnPosition(kind="track", index=10)
+
+        moves = get_legal_moves(state, seat_index=0, card="7")
+
+        # Find a 7-split move where pawn_a moves 1 (landing on slide) and pawn_b moves 6
+        target_move = None
+        for m in moves:
+            if (m.pawn_id == pawn_a.pawn_id and m.secondary_pawn_id == pawn_b.pawn_id
+                    and m.steps == 1 and m.secondary_steps == 6):
+                target_move = m
+                break
+
+        self.assertIsNotNone(target_move, "expected a 7-split move with primary landing on blue's slide")
+
+        new_state = apply_move(state, target_move)
+
+        pawn_a_new = next(p for p in new_state.pawns if p.pawn_id == pawn_a.pawn_id)
+
+        # The primary pawn should have slid to the end of blue's slide
+        self.assertEqual(pawn_a_new.position.kind, "track")
+        self.assertEqual(
+            pawn_a_new.position.index, slide_end,
+            f"primary pawn should have slid to {slide_end} but is at {pawn_a_new.position.index}"
+        )
+
     def test_card11_cannot_leave_start(self) -> None:
         state, _, _ = self._make_basic_state()
 

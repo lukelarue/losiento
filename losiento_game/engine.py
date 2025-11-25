@@ -38,10 +38,17 @@ SECOND_SLIDE_LEN = 5
 def segment_offset(seat_index: int) -> int:
     """Return the starting track index for the given seat's color segment.
 
-    Seat indices are assumed to be 0..3 and map directly to COLORS order.
+    Board positions: Yellow=top-left, Green=top-right, Red=bottom-right, Blue=bottom-left
+    Seat colors: Seat 0=Red, Seat 1=Blue, Seat 2=Yellow, Seat 3=Green
+    
+    This maps seats to board positions:
+      Seat 0 (Red) -> segment 30 (bottom-right)
+      Seat 1 (Blue) -> segment 45 (bottom-left)
+      Seat 2 (Yellow) -> segment 0 (top-left)
+      Seat 3 (Green) -> segment 15 (top-right)
     """
-
-    return (seat_index % NUM_COLORS) * TRACK_SEGMENT_LEN
+    # Rotate by 2 positions to map seat indices to board positions
+    return ((seat_index + 2) % NUM_COLORS) * TRACK_SEGMENT_LEN
 
 
 def first_slide_indices(seat_index: int) -> List[int]:

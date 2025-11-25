@@ -1,4 +1,4 @@
-# Lo Siento Visual Redesign
+# ¡Lo Siento! Visual Redesign
 
 ## Overview
 
@@ -13,21 +13,31 @@ Replace existing CSS-drawn visuals (board grid, pawn shapes) with image-based as
 
 ### 2. Board Specifications
 - **Dimensions**: 800×800 pixels
-- **Tile size**: 50×50 pixel squares
+- **Tile size**: 50×50 pixel squares (49×49 white interior with 1px black border)
 - **Layout**: Tiles arranged around the perimeter and into the safe zones, matching the existing game logic (60 track tiles + 5 safety tiles per player + home/start areas)
+- **Start circles**: Larger than tile, center pawn in circle
+- **Home stars**: Larger than tile, center pawn in star
+- **Entire 50×50 area clickable** even though tile interior is 49×49
 
 ### 3. Pawn Specifications
 - **Size constraint**: Pawns must fit within 50×50 tile area
 - **Colors**: Red, blue, yellow, green (one per player seat)
 
 ### 4. Movement Animations
-- **Standard movement**: Pawns traverse tiles in a rapid arching motion (parabolic curve upward between source and destination)
+- **Standard movement**: Pawns traverse **each individual tile** in a rapid arching motion (parabolic curve upward between tiles)
 - **Slide movement**: Pawns slide horizontally/vertically across slide tiles (linear motion, faster than arch)
-- **Knockout animation**: When bumped (via Sorry! or landing), the pawn spins (360° rotation) while returning to its start home area
+- **Knockout animation**: When bumped (via ¡Lo Siento! or landing), the pawn spins (720° rotation) while returning to its start home area
+- **7-split moves**: Both pawns animate **simultaneously** (not sequentially)
 
-### 5. Stacked Pawn Display
-- When multiple pawns occupy the same space (home start or start exit), display a single pawn image with a black number overlay indicating count
-- Number should be clearly visible on top of the pawn image
+### 5. Multiple Pawn Display at Start/Home
+- When multiple pawns occupy the same space (start circle or home star), spread them out in formations:
+  - **4 pawns**: Square formation
+  - **3 pawns**: Triangle (2 on top, 1 below from player's perspective, rotating around the board)
+  - **2 pawns**: Line formation
+  - **1 pawn**: Centered
+- Formations rotate based on seat position (Red=0°, Blue=90°, Yellow=180°, Green=270°)
+- Clicking any pawn in a start formation selects one pawn (order doesn't matter, one at a time)
+- All pawns in formation at start should highlight when a legal move is available
 
 ### 6. Tile Highlighting
 - Clickable/selectable tiles must have a visual highlight overlay on top of the board image
@@ -37,7 +47,7 @@ Replace existing CSS-drawn visuals (board grid, pawn shapes) with image-based as
 ### 7. Interface Toggle
 - Two interface modes accessible via buttons:
   - **"Basic Interface"**: Current CSS-based UI (existing implementation)
-  - **"Lo Siento"**: New image-based visual UI
+  - **"¡Lo Siento!"**: New image-based visual UI
 - Toggle buttons visible during active game
 - All game functionality remains identical between modes—only visuals change
 
@@ -52,15 +62,15 @@ All existing UI features must work in both modes:
 
 ---
 
-## Available Assets
+## Available Assets (in `frontend/assets/`)
 
-| Asset | PNG | SVG |
-|-------|-----|-----|
-| Board | `lo siento board.png` (140 KB) | `lo siento board.svg` (783 KB) |
-| Red Pawn | `red pawn.png` (2.2 KB) | `red pawn.svg` (250 KB) |
-| Blue Pawn | `blue pawn.png` (2.2 KB) | `blue pawn.svg` (251 KB) |
-| Yellow Pawn | `yellow pawn.png` (2.2 KB) | `yellow pawn.svg` (250 KB) |
-| Green Pawn | `green pawn.png` (2.2 KB) | `green pawn.svg` (250 KB) |
+| Asset | File | Size |
+|-------|------|------|
+| Board | `board.png` | 140 KB |
+| Red Pawn | `pawn-red.png` | 2.2 KB |
+| Blue Pawn | `pawn-blue.png` | 2.2 KB |
+| Yellow Pawn | `pawn-yellow.png` | 2.2 KB |
+| Green Pawn | `pawn-green.png` | 2.2 KB |
 
 ---
 
@@ -341,13 +351,16 @@ async function animatePawnMove(pawnEl, from, to, type = 'arch') {
 
 ---
 
-## Open Questions
+## Resolved Questions
 
-1. **Board alignment**: Does the Figma board image have any padding, or do tiles start at pixel (0,0)?
-2. **Tile clickable areas**: Should the entire 50×50 area be clickable, or just the visible tile artwork?
-3. **Animation timing**: What duration feels "rapid" for arch movement? (Suggested: 200–300ms per tile)
-4. **Multi-hop animation**: When moving 7 spaces, should we animate through each intermediate tile, or arc directly to destination?
-5. **Sound effects**: Any audio to accompany animations in the future?
+1. **Board alignment**: Tiles start at pixel (0,0). Each tile is 50×50 with 1px black border.
+2. **Tile clickable areas**: Entire 50×50 area is clickable.
+3. **Animation timing**: ~150-200ms per tile for arch, faster for slides.
+4. **Multi-hop animation**: Animate through each intermediate tile individually.
+5. **Sound effects**: Future support planned:
+   - Sound for moving pieces
+   - Soundbite for "¡Lo Siento!"
+   - Background music
 
 ---
 
