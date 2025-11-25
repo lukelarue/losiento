@@ -27,7 +27,7 @@ class Seat:
     is_bot: bool
     player_id: Optional[str]
     display_name: Optional[str]
-    status: Literal["open", "joined", "bot"]
+    status: Literal["open", "joined", "bot", "closed"]
 
 
 @dataclass
@@ -58,6 +58,7 @@ class GameState:
     winner_seat_index: Optional[int]
     result: Literal["active", "win", "aborted"]
     card_history: List[CardHistoryEntry] = None  # type: ignore
+    current_card: Optional[Card] = None  # Card being contemplated by current player
 
     def __post_init__(self):
         if self.card_history is None:
@@ -113,5 +114,6 @@ def game_state_to_dict(state: GameState) -> Dict[str, Any]:
                 }
                 for entry in card_history_list
             ],
+            "currentCard": state.current_card,
         },
     }

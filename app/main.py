@@ -48,7 +48,12 @@ class KickPlayerBody(BaseModel):
 class ConfigureSeatBody(BaseModel):
     game_id: str
     seat_index: int = Field(..., ge=0, le=3)
-    is_bot: bool
+    status: str  # "open", "bot", or "closed"
+
+
+class SwapSeatBody(BaseModel):
+    game_id: str
+    target_seat_index: int = Field(..., ge=0, le=3)
 
 
 class StartGameBody(BaseModel):
@@ -187,7 +192,18 @@ def create_app(persistence=None) -> FastAPI:
     @app.post(f"{API_BASE}/configure-seat")
     def configure_seat(body: ConfigureSeatBody, user_id: str = Depends(get_user_id)):
         try:
-            doc = app.state.persistence.configure_seat(body.game_id, user_id, body.seat_index, body.is_bot)
+            doc = app.state.persistence.configure_seat(body.game_id, user_id, body.seat_index, body.status)
+        except ValueError as e:
+            msg = str(e)
+            if msg == "game_not_found":
+                raise HTTPException(status_code=404, detail=msg)
+            raise HTTPException(status_code=400, detail=msg)
+        return app.state.persistence.to_client(doc, user_id)
+
+    @app.post(f"{API_BASE}/swap-seat")
+    def swap_seat(body: SwapSeatBody, user_id: str = Depends(get_user_id)):
+        try:
+            doc = app.state.persistence.swap_seat(body.game_id, user_id, body.target_seat_index)
         except ValueError as e:
             msg = str(e)
             if msg == "game_not_found":

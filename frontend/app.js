@@ -470,10 +470,13 @@
     lobbySeatsEl.innerHTML = "";
     const colors = seatColorMap(g);
     const amHost = isHost();
+    const viewerSeatIndex = typeof g.viewerSeatIndex === "number" ? g.viewerSeatIndex : null;
 
     seats.forEach((s) => {
       const seatEl = document.createElement("div");
       seatEl.className = "lobby-seat";
+      // Add colored background based on seat color
+      seatEl.classList.add(`lobby-seat-${s.color}`);
 
       const header = document.createElement("div");
       header.className = "lobby-seat-header";
@@ -489,6 +492,9 @@
       } else if (s.isBot) {
         pill.classList.add("pill-bot");
         pill.textContent = "Bot";
+      } else if (s.status === "closed") {
+        pill.classList.add("pill-closed");
+        pill.textContent = "Closed";
       } else {
         pill.classList.add("pill-open");
         pill.textContent = "Open";
@@ -499,31 +505,105 @@
       seatEl.appendChild(header);
 
       const body = document.createElement("div");
-      body.textContent = s.displayName || (s.isBot ? "Bot" : "(empty)");
+      body.className = "lobby-seat-body";
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = s.displayName || (s.isBot ? "Bot" : s.status === "closed" ? "(closed)" : "(empty)");
+      body.appendChild(nameSpan);
+
+      // Add swap button for any player to swap with bot/closed seats (not their own seat)
+      const canSwap = g.phase === "lobby" && 
+                      viewerSeatIndex !== null && 
+                      s.index !== viewerSeatIndex && 
+                      (s.status === "bot" || s.status === "closed");
+      if (canSwap) {
+        const swapBtn = document.createElement("button");
+        swapBtn.className = "swap-seat-btn";
+        swapBtn.textContent = "⇄";
+        swapBtn.title = `Swap to Seat ${s.index + 1}`;
+        swapBtn.addEventListener("click", async () => {
+          try {
+            const updated = await api("/swap-seat", {
+              method: "POST",
+              body: JSON.stringify({
+                game_id: g.gameId,
+                target_seat_index: s.index,
+              }),
+            });
+            currentGame = updated;
+            renderFromGame();
+            showToast(`Swapped to Seat ${s.index + 1}`);
+          } catch (err) {
+            showToast(`Swap failed: ${err.message}`);
+          }
+        });
+        body.appendChild(swapBtn);
+      }
+
       seatEl.appendChild(body);
 
-      // Only host can configure seats
+      // Host-only controls: dropdown for seat configuration (except seat 0)
       if (s.index !== 0 && g.phase === "lobby" && amHost) {
         const controls = document.createElement("div");
-        const toBot = document.createElement("button");
-        toBot.textContent = s.isBot ? "Make human" : "Make bot";
-        toBot.addEventListener("click", async () => {
+        controls.className = "lobby-seat-controls";
+        
+        const dropdown = document.createElement("select");
+        dropdown.className = "seat-config-dropdown";
+        
+        const optHuman = document.createElement("option");
+        optHuman.value = "open";
+        optHuman.textContent = "Human";
+        
+        const optBot = document.createElement("option");
+        optBot.value = "bot";
+        optBot.textContent = "Bot";
+        
+        const optClosed = document.createElement("option");
+        optClosed.value = "closed";
+        optClosed.textContent = "Closed";
+        
+        dropdown.appendChild(optHuman);
+        dropdown.appendChild(optBot);
+        dropdown.appendChild(optClosed);
+        
+        // Set current value based on seat status
+        if (s.isBot) {
+          dropdown.value = "bot";
+        } else if (s.status === "closed") {
+          dropdown.value = "closed";
+        } else {
+          dropdown.value = "open";
+        }
+        
+        dropdown.addEventListener("change", async () => {
+          const newStatus = dropdown.value;
           try {
             const updated = await api("/configure-seat", {
               method: "POST",
               body: JSON.stringify({
                 game_id: g.gameId,
                 seat_index: s.index,
-                is_bot: !s.isBot,
+                status: newStatus,
               }),
             });
             currentGame = updated;
             renderFromGame();
+            if (s.playerId && s.status === "joined") {
+              showToast(`Player kicked from Seat ${s.index + 1}`);
+            }
           } catch (err) {
             showToast(`Configure seat failed: ${err.message}`);
+            // Reset dropdown to previous value
+            if (s.isBot) {
+              dropdown.value = "bot";
+            } else if (s.status === "closed") {
+              dropdown.value = "closed";
+            } else {
+              dropdown.value = "open";
+            }
           }
         });
-        controls.appendChild(toBot);
+        
+        controls.appendChild(dropdown);
         seatEl.appendChild(controls);
       }
 
@@ -593,7 +673,12 @@
 
     const isActive = state.result === "active";
     const isPreviewingCard = isActive && upcomingCard != null;
-    const displayCard = isPreviewingCard ? upcomingCard : lastCard;
+    // Use server-side current card if available (shows what card is being contemplated by current player)
+    const serverCurrentCard = state.currentCard || null;
+    // For display: prefer local preview card (if we're the one playing), then server current card, then last discarded
+    const displayCard = isPreviewingCard ? upcomingCard : (serverCurrentCard || lastCard);
+    // Determine if we're showing a "current" card (being contemplated) vs "last" card (already played)
+    const isShowingCurrentCard = isPreviewingCard || (serverCurrentCard != null);
 
     const genericHint = isActive
       ? isPreviewingCard
@@ -657,8 +742,10 @@
     }
 
     if (gameCardEl) {
+      // Show "Current Card" when someone is contemplating, "Last Card" otherwise
+      const cardLabel = isShowingCurrentCard ? "Current card" : "Last card";
       gameCardEl.innerHTML = `
-        <div class="game-card-label">Last card</div>
+        <div class="game-card-label">${cardLabel}</div>
         <div class="game-card-name">${cardName}</div>
         <div class="game-card-desc">${cardDescription}</div>
         ${moveStatusHtml}
@@ -892,10 +979,10 @@
           ? pawnForSelected.seatIndex
           : null;
 
-      if (selectedMove.destType === "track" && typeof selectedMove.destIndex === "number") {
-        // Always highlight the actual final track square where the pawn ends,
-        // including after any slide effects.
-        selectedDestTrackIndex = selectedMove.destIndex;
+      if (selectedMove.logicalDestType === "track" && typeof selectedMove.logicalDestIndex === "number") {
+        // Highlight the logical track square where the pawn lands before any
+        // slide effects (the beginning of the slide, not the end).
+        selectedDestTrackIndex = selectedMove.logicalDestIndex;
       } else if (
         selectedMove.destType === "safety" &&
         typeof selectedMove.destIndex === "number" &&

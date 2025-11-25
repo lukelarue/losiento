@@ -408,7 +408,8 @@ class InMemoryPersistence:
         game["updated_at"] = _now()
         return game
 
-    def configure_seat(self, game_id: str, host_id: str, seat_index: int, is_bot: bool) -> Dict[str, Any]:
+    def configure_seat(self, game_id: str, host_id: str, seat_index: int, status: str) -> Dict[str, Any]:
+        """Configure a seat in lobby. Status can be 'open' (human), 'bot', or 'closed'."""
         game = self._get_game(game_id)
         if game["host_id"] != host_id:
             raise ValueError("not_host")
@@ -418,21 +419,78 @@ class InMemoryPersistence:
         if not (0 <= seat_index < len(seats)):
             raise ValueError("invalid_seat")
         if seat_index == 0:
+            # Can't change host seat
             return game
+        if status not in ("open", "bot", "closed"):
+            raise ValueError("invalid_status")
         seat = seats[seat_index]
-        if is_bot:
-            if seat.player_id and seat.player_id in self.user_active_game:
-                del self.user_active_game[seat.player_id]
-            seat.player_id = None
-            seat.display_name = None
+        # If a human is in the seat, kick them first
+        if seat.player_id and seat.player_id in self.user_active_game:
+            del self.user_active_game[seat.player_id]
+        seat.player_id = None
+        seat.display_name = None
+        if status == "bot":
             seat.is_bot = True
             seat.status = "bot"
-        else:
-            seat.player_id = None
-            seat.display_name = None
+        elif status == "closed":
+            seat.is_bot = False
+            seat.status = "closed"
+        else:  # open
             seat.is_bot = False
             seat.status = "open"
         game["updated_at"] = _now()
+        return game
+
+    def swap_seat(self, game_id: str, user_id: str, target_seat_index: int) -> Dict[str, Any]:
+        """Swap the caller's seat with a bot or closed seat."""
+        game = self._get_game(game_id)
+        if game["phase"] != "lobby":
+            raise ValueError("not_lobby")
+        seats: List[Seat] = game["seats"]
+        
+        # Find caller's current seat
+        caller_seat: Optional[Seat] = None
+        caller_seat_index: Optional[int] = None
+        for s in seats:
+            if s.player_id == user_id:
+                caller_seat = s
+                caller_seat_index = s.index
+                break
+        if caller_seat is None:
+            raise ValueError("not_in_game")
+        
+        if not (0 <= target_seat_index < len(seats)):
+            raise ValueError("invalid_seat")
+        target_seat = seats[target_seat_index]
+        
+        # Can only swap with bot or closed seats
+        if target_seat.status not in ("bot", "closed"):
+            raise ValueError("target_not_swappable")
+        
+        # Host (seat 0) can swap, but the target cannot be another human
+        # Perform the swap: move caller to target seat, set original seat to target's status
+        original_status = target_seat.status
+        original_is_bot = target_seat.is_bot
+        
+        # Move caller to target seat
+        target_seat.player_id = caller_seat.player_id
+        target_seat.display_name = caller_seat.display_name
+        target_seat.is_bot = False
+        target_seat.status = "joined"
+        
+        # Set caller's original seat to target's original status
+        caller_seat.player_id = None
+        caller_seat.display_name = None
+        caller_seat.is_bot = original_is_bot
+        caller_seat.status = original_status
+        
+        # Update user's active game seat reference
+        game["updated_at"] = _now()
+        
+        # If swapped user was host, update host seat reference
+        if caller_seat_index == 0:
+            game["host_id"] = user_id  # Host ID stays the same
+        
         return game
 
     def start_game(self, game_id: str, host_id: str) -> Dict[str, Any]:
@@ -443,7 +501,8 @@ class InMemoryPersistence:
             raise ValueError("not_lobby")
         seats: List[Seat] = game["seats"]
         humans = [s for s in seats if not s.is_bot and s.player_id]
-        active_seats = [s for s in seats if s.player_id or s.is_bot]
+        # Exclude closed seats from active seats
+        active_seats = [s for s in seats if s.status != "closed" and (s.player_id or s.is_bot)]
         if len(active_seats) < 2 or len(humans) < 1:
             raise ValueError("insufficient_players")
         settings: GameSettings = game["settings"]
@@ -746,6 +805,9 @@ class InMemoryPersistence:
         This simulates drawing the next card on a *copy* of the GameState so the
         authoritative deck/discard in memory are not mutated. The result is
         advisory and used by the frontend to highlight legal movers.
+        
+        Also sets current_card on the real state so all players can see what
+        card is being contemplated.
         """
 
         game = self._get_game(game_id)
@@ -763,6 +825,11 @@ class InMemoryPersistence:
 
         tmp_state = copy.deepcopy(state)
         card = self._draw_card(tmp_state)
+        
+        # Set current_card on real state so all players can see it
+        state.current_card = card
+        game["updated_at"] = _now()
+        
         moves = get_legal_moves(tmp_state, seat_index, card)
         primary_ids = {m.pawn_id for m in moves if m.seat_index == seat_index}
         secondary_ids = {
@@ -858,6 +925,9 @@ class InMemoryPersistence:
             # play_move will draw the next card for this same player.
             if state.result == "active" and card != "2":
                 self._advance_turn(game, state)
+            
+            # Clear current_card after move is played
+            state.current_card = None
         except ValueError:
             state.deck = deck_before
             state.discard_pile = discard_before
@@ -903,6 +973,9 @@ class InMemoryPersistence:
 
         if state.result == "active" and card != "2":
             self._advance_turn(game, state)
+        
+        # Clear current_card after bot move
+        state.current_card = None
 
         game["updated_at"] = _now()
         return game
@@ -1046,6 +1119,7 @@ class FirestorePersistence:
             winner_seat_index=state_dict.get("winnerSeatIndex"),
             result=str(state_dict.get("result", "active")),
             card_history=card_history,
+            current_card=state_dict.get("currentCard"),
         )
 
     def _ensure_deck(self, state: GameState) -> None:
@@ -1449,15 +1523,13 @@ class FirestorePersistence:
 
         return self._snapshot_to_game(game_ref.get())
 
-    def configure_seat(self, game_id: str, host_id: str, seat_index: int, is_bot: bool) -> Dict[str, Any]:
+    def configure_seat(self, game_id: str, host_id: str, seat_index: int, status: str) -> Dict[str, Any]:
         """Host-only seat configuration in lobby.
 
-        Mirrors InMemoryPersistence.configure_seat semantics:
+        Status can be 'open' (human), 'bot', or 'closed'.
         - Only allowed while phase == "lobby".
         - Seat 0 (host) is not reconfigurable.
-        - When toggling to bot, clear any existing player assignment and
-          activeGameId for that user.
-        - When toggling to human, mark seat as open human (no playerId yet).
+        - Clears any existing player assignment and activeGameId for that user.
         """
 
         game_ref = self._games_collection().document(game_id)
@@ -1470,6 +1542,8 @@ class FirestorePersistence:
             raise ValueError("not_host")
         if data.get("phase") != "lobby":
             raise ValueError("not_lobby")
+        if status not in ("open", "bot", "closed"):
+            raise ValueError("invalid_status")
 
         seats: List[Dict[str, Any]] = data.get("seats", [])
         if not (0 <= seat_index < len(seats)):
@@ -1479,19 +1553,21 @@ class FirestorePersistence:
             return self._snapshot_to_game(snap)
 
         seat = seats[seat_index]
-        if is_bot:
-            # Converting to bot clears player and activeGameId.
-            prior_player_id = seat.get("playerId")
-            if prior_player_id:
-                user_ref = self._users_collection().document(prior_player_id)
-                user_ref.set({"activeGameId": None}, merge=True)
-            seat["playerId"] = None
-            seat["displayName"] = None
+        # Clear any existing player and activeGameId
+        prior_player_id = seat.get("playerId")
+        if prior_player_id:
+            user_ref = self._users_collection().document(prior_player_id)
+            user_ref.set({"activeGameId": None}, merge=True)
+        
+        seat["playerId"] = None
+        seat["displayName"] = None
+        if status == "bot":
             seat["isBot"] = True
             seat["status"] = "bot"
-        else:
-            seat["playerId"] = None
-            seat["displayName"] = None
+        elif status == "closed":
+            seat["isBot"] = False
+            seat["status"] = "closed"
+        else:  # open
             seat["isBot"] = False
             seat["status"] = "open"
 
@@ -1499,6 +1575,60 @@ class FirestorePersistence:
         data["updatedAt"] = _now()
         game_ref.set(data)
 
+        return self._snapshot_to_game(game_ref.get())
+
+    def swap_seat(self, game_id: str, user_id: str, target_seat_index: int) -> Dict[str, Any]:
+        """Swap the caller's seat with a bot or closed seat."""
+        game_ref = self._games_collection().document(game_id)
+        snap = game_ref.get()
+        if not snap.exists:
+            raise ValueError("game_not_found")
+
+        data = snap.to_dict() or {}
+        if data.get("phase") != "lobby":
+            raise ValueError("not_lobby")
+
+        seats: List[Dict[str, Any]] = data.get("seats", [])
+        
+        # Find caller's current seat
+        caller_seat = None
+        caller_seat_index = None
+        for s in seats:
+            if s.get("playerId") == user_id:
+                caller_seat = s
+                caller_seat_index = s.get("index")
+                break
+        if caller_seat is None:
+            raise ValueError("not_in_game")
+        
+        if not (0 <= target_seat_index < len(seats)):
+            raise ValueError("invalid_seat")
+        target_seat = seats[target_seat_index]
+        
+        # Can only swap with bot or closed seats
+        if target_seat.get("status") not in ("bot", "closed"):
+            raise ValueError("target_not_swappable")
+        
+        # Perform the swap
+        original_status = target_seat.get("status")
+        original_is_bot = target_seat.get("isBot", False)
+        
+        # Move caller to target seat
+        target_seat["playerId"] = caller_seat.get("playerId")
+        target_seat["displayName"] = caller_seat.get("displayName")
+        target_seat["isBot"] = False
+        target_seat["status"] = "joined"
+        
+        # Set caller's original seat to target's original status
+        caller_seat["playerId"] = None
+        caller_seat["displayName"] = None
+        caller_seat["isBot"] = original_is_bot
+        caller_seat["status"] = original_status
+        
+        data["seats"] = seats
+        data["updatedAt"] = _now()
+        game_ref.set(data)
+        
         return self._snapshot_to_game(game_ref.get())
 
     def start_game(self, game_id: str, host_id: str) -> Dict[str, Any]:
@@ -1522,7 +1652,8 @@ class FirestorePersistence:
 
         seats_data: List[Dict[str, Any]] = data.get("seats", [])
         humans = [s for s in seats_data if not s.get("isBot") and s.get("playerId")]
-        active_seats = [s for s in seats_data if s.get("playerId") or s.get("isBot")]
+        # Exclude closed seats from active seats
+        active_seats = [s for s in seats_data if s.get("status") != "closed" and (s.get("playerId") or s.get("isBot"))]
         if len(active_seats) < 2 or len(humans) < 1:
             raise ValueError("insufficient_players")
 
@@ -1615,6 +1746,15 @@ class FirestorePersistence:
 
         tmp_state = copy.deepcopy(state)
         card = self._draw_card(tmp_state)
+        
+        # Set current_card on Firestore so all players can see it
+        state_data = data.get("state") or {}
+        state_data["currentCard"] = card
+        game_ref.update({
+            "state": state_data,
+            "updatedAt": _now(),
+        })
+        
         moves = get_legal_moves(tmp_state, seat_index, card)
         pawn_ids = sorted({m.pawn_id for m in moves if m.seat_index == seat_index})
 
@@ -1745,6 +1885,9 @@ class FirestorePersistence:
             # play_move will draw the next card for this same player.
             if state.result == "active" and card != "2":
                 self._advance_turn(seats_data, state)
+            
+            # Clear current_card after move is played
+            state.current_card = None
 
             state_dict = game_state_to_dict(state)
             data["state"] = state_dict["state"]
@@ -1827,6 +1970,9 @@ class FirestorePersistence:
 
             if state.result == "active" and card != "2":
                 self._advance_turn(seats_data, state)
+            
+            # Clear current_card after bot move
+            state.current_card = None
 
             state_dict = game_state_to_dict(state)
             data["state"] = state_dict["state"]
