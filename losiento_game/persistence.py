@@ -418,12 +418,12 @@ class InMemoryPersistence:
         seats: List[Seat] = game["seats"]
         if not (0 <= seat_index < len(seats)):
             raise ValueError("invalid_seat")
-        if seat_index == 0:
-            # Can't change host seat
-            return game
         if status not in ("open", "bot", "closed"):
             raise ValueError("invalid_status")
         seat = seats[seat_index]
+        # Can't change the host's own seat
+        if seat.player_id == host_id:
+            return game
         # If a human is in the seat, kick them first
         if seat.player_id and seat.player_id in self.user_active_game:
             del self.user_active_game[seat.player_id]
@@ -450,11 +450,9 @@ class InMemoryPersistence:
         
         # Find caller's current seat
         caller_seat: Optional[Seat] = None
-        caller_seat_index: Optional[int] = None
         for s in seats:
             if s.player_id == user_id:
                 caller_seat = s
-                caller_seat_index = s.index
                 break
         if caller_seat is None:
             raise ValueError("not_in_game")
@@ -467,7 +465,6 @@ class InMemoryPersistence:
         if target_seat.status not in ("bot", "closed"):
             raise ValueError("target_not_swappable")
         
-        # Host (seat 0) can swap, but the target cannot be another human
         # Perform the swap: move caller to target seat, set original seat to target's status
         original_status = target_seat.status
         original_is_bot = target_seat.is_bot
@@ -484,13 +481,7 @@ class InMemoryPersistence:
         caller_seat.is_bot = original_is_bot
         caller_seat.status = original_status
         
-        # Update user's active game seat reference
         game["updated_at"] = _now()
-        
-        # If swapped user was host, update host seat reference
-        if caller_seat_index == 0:
-            game["host_id"] = user_id  # Host ID stays the same
-        
         return game
 
     def start_game(self, game_id: str, host_id: str) -> Dict[str, Any]:
@@ -1548,11 +1539,12 @@ class FirestorePersistence:
         seats: List[Dict[str, Any]] = data.get("seats", [])
         if not (0 <= seat_index < len(seats)):
             raise ValueError("invalid_seat")
-        if seat_index == 0:
-            # Mirror in-memory behaviour: do nothing for host seat.
-            return self._snapshot_to_game(snap)
 
         seat = seats[seat_index]
+        # Can't change the host's own seat
+        if seat.get("playerId") == host_id:
+            return self._snapshot_to_game(snap)
+        
         # Clear any existing player and activeGameId
         prior_player_id = seat.get("playerId")
         if prior_player_id:
@@ -1592,11 +1584,9 @@ class FirestorePersistence:
         
         # Find caller's current seat
         caller_seat = None
-        caller_seat_index = None
         for s in seats:
             if s.get("playerId") == user_id:
                 caller_seat = s
-                caller_seat_index = s.get("index")
                 break
         if caller_seat is None:
             raise ValueError("not_in_game")

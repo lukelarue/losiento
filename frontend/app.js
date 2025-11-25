@@ -509,101 +509,121 @@
       const nameSpan = document.createElement("span");
       nameSpan.textContent = s.displayName || (s.isBot ? "Bot" : s.status === "closed" ? "(closed)" : "(empty)");
       body.appendChild(nameSpan);
-
-      // Add swap button for any player to swap with bot/closed seats (not their own seat)
-      const canSwap = g.phase === "lobby" && 
-                      viewerSeatIndex !== null && 
-                      s.index !== viewerSeatIndex && 
-                      (s.status === "bot" || s.status === "closed");
-      if (canSwap) {
-        const swapBtn = document.createElement("button");
-        swapBtn.className = "swap-seat-btn";
-        swapBtn.textContent = "⇄";
-        swapBtn.title = `Swap to Seat ${s.index + 1}`;
-        swapBtn.addEventListener("click", async () => {
-          try {
-            const updated = await api("/swap-seat", {
-              method: "POST",
-              body: JSON.stringify({
-                game_id: g.gameId,
-                target_seat_index: s.index,
-              }),
-            });
-            currentGame = updated;
-            renderFromGame();
-            showToast(`Swapped to Seat ${s.index + 1}`);
-          } catch (err) {
-            showToast(`Swap failed: ${err.message}`);
-          }
-        });
-        body.appendChild(swapBtn);
-      }
-
       seatEl.appendChild(body);
 
-      // Host-only controls: dropdown for seat configuration (except seat 0)
-      if (s.index !== 0 && g.phase === "lobby" && amHost) {
+      // Controls row: dropdown on left (host only, not for own seat), swap button on far right
+      if (g.phase === "lobby") {
         const controls = document.createElement("div");
         controls.className = "lobby-seat-controls";
         
-        const dropdown = document.createElement("select");
-        dropdown.className = "seat-config-dropdown";
+        const leftSide = document.createElement("div");
+        leftSide.className = "lobby-seat-controls-left";
         
-        const optHuman = document.createElement("option");
-        optHuman.value = "open";
-        optHuman.textContent = "Human";
-        
-        const optBot = document.createElement("option");
-        optBot.value = "bot";
-        optBot.textContent = "Bot";
-        
-        const optClosed = document.createElement("option");
-        optClosed.value = "closed";
-        optClosed.textContent = "Closed";
-        
-        dropdown.appendChild(optHuman);
-        dropdown.appendChild(optBot);
-        dropdown.appendChild(optClosed);
-        
-        // Set current value based on seat status
-        if (s.isBot) {
-          dropdown.value = "bot";
-        } else if (s.status === "closed") {
-          dropdown.value = "closed";
-        } else {
-          dropdown.value = "open";
+        // Host-only dropdown for seat configuration (not for host's own seat)
+        const isHostSeat = s.playerId === g.hostId;
+        if (amHost && !isHostSeat) {
+          const dropdown = document.createElement("select");
+          dropdown.className = "seat-config-dropdown";
+          
+          const optHuman = document.createElement("option");
+          optHuman.value = "open";
+          optHuman.textContent = "Human";
+          
+          const optBot = document.createElement("option");
+          optBot.value = "bot";
+          optBot.textContent = "Bot";
+          
+          const optClosed = document.createElement("option");
+          optClosed.value = "closed";
+          optClosed.textContent = "Closed";
+          
+          dropdown.appendChild(optHuman);
+          dropdown.appendChild(optBot);
+          dropdown.appendChild(optClosed);
+          
+          // Set current value based on seat status
+          if (s.isBot) {
+            dropdown.value = "bot";
+          } else if (s.status === "closed") {
+            dropdown.value = "closed";
+          } else {
+            dropdown.value = "open";
+          }
+
+          // Pause polling while host is interacting with the dropdown so the
+          // lobby UI doesn't get rebuilt underneath the open menu.
+          dropdown.addEventListener("focus", () => {
+            stopPolling();
+          });
+
+          dropdown.addEventListener("blur", () => {
+            if (currentGame && currentGame.phase === "lobby") {
+              startPolling();
+            }
+          });
+
+          dropdown.addEventListener("change", async () => {
+            const newStatus = dropdown.value;
+            try {
+              const updated = await api("/configure-seat", {
+                method: "POST",
+                body: JSON.stringify({
+                  game_id: g.gameId,
+                  seat_index: s.index,
+                  status: newStatus,
+                }),
+              });
+              currentGame = updated;
+              renderFromGame();
+              if (s.playerId && s.status === "joined") {
+                showToast(`Player kicked from Seat ${s.index + 1}`);
+              }
+            } catch (err) {
+              showToast(`Configure seat failed: ${err.message}`);
+              // Reset dropdown to previous value
+              if (s.isBot) {
+                dropdown.value = "bot";
+              } else if (s.status === "closed") {
+                dropdown.value = "closed";
+              } else {
+                dropdown.value = "open";
+              }
+            }
+          });
+          
+          leftSide.appendChild(dropdown);
         }
         
-        dropdown.addEventListener("change", async () => {
-          const newStatus = dropdown.value;
-          try {
-            const updated = await api("/configure-seat", {
-              method: "POST",
-              body: JSON.stringify({
-                game_id: g.gameId,
-                seat_index: s.index,
-                status: newStatus,
-              }),
-            });
-            currentGame = updated;
-            renderFromGame();
-            if (s.playerId && s.status === "joined") {
-              showToast(`Player kicked from Seat ${s.index + 1}`);
+        controls.appendChild(leftSide);
+
+        // Swap button on far right (for any player to swap with bot/closed seats, not own seat)
+        const canSwap = viewerSeatIndex !== null && 
+                        s.index !== viewerSeatIndex && 
+                        (s.status === "bot" || s.status === "closed");
+        if (canSwap) {
+          const swapBtn = document.createElement("button");
+          swapBtn.className = "swap-seat-btn";
+          swapBtn.textContent = "⇄";
+          swapBtn.title = `Swap to Seat ${s.index + 1}`;
+          swapBtn.addEventListener("click", async () => {
+            try {
+              const updated = await api("/swap-seat", {
+                method: "POST",
+                body: JSON.stringify({
+                  game_id: g.gameId,
+                  target_seat_index: s.index,
+                }),
+              });
+              currentGame = updated;
+              renderFromGame();
+              showToast(`Swapped to Seat ${s.index + 1}`);
+            } catch (err) {
+              showToast(`Swap failed: ${err.message}`);
             }
-          } catch (err) {
-            showToast(`Configure seat failed: ${err.message}`);
-            // Reset dropdown to previous value
-            if (s.isBot) {
-              dropdown.value = "bot";
-            } else if (s.status === "closed") {
-              dropdown.value = "closed";
-            } else {
-              dropdown.value = "open";
-            }
-          }
-        });
-        
-        controls.appendChild(dropdown);
+          });
+          controls.appendChild(swapBtn);
+        }
+
         seatEl.appendChild(controls);
       }
 
@@ -1070,8 +1090,8 @@
           turnPill.textContent = "Your turn";
           pill.appendChild(turnPill);
 
-          // Add kick button for host (only for non-host seats with human players)
-          if (amHost && seatIndex !== 0 && seat && !seat.isBot && seat.playerId && isActive) {
+          // Add kick button for host (only for non-host human players - can't kick yourself)
+          if (amHost && seat && !seat.isBot && seat.playerId && seat.playerId !== g.hostId && isActive) {
             const kickBtn = document.createElement("button");
             kickBtn.className = "kick-player-btn";
             kickBtn.textContent = "Kick";
