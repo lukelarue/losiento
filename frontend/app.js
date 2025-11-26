@@ -2931,11 +2931,13 @@
         // Safety limit to prevent infinite loops
         let steps = 0;
         const maxSteps = TRACK_LEN + 10;
+        let slideDetected = false;
         while (current !== toIdx && steps < maxSteps) {
           steps++;
           current = (current + 1) % TRACK_LEN;
           
           // Check if this is a slide start (for opponent's slide only - can't slide on your own)
+          // Only counts as a slide if we LAND on the start (not if we started there)
           const slideEnd = lsGetSlideEnd(current);
           const slideOwner = lsGetSlideOwner(current);
           if (slideEnd !== null && slideEnd === toIdx && slideOwner !== seatIndex) {
@@ -2945,12 +2947,14 @@
             // Add the slide END position to the path so detection works
             addTrackPos(toIdx);
             path.slideInfo = { slideStartPathIdx: slideStartIdx, slideEndPathIdx: path.length - 1 };
-            // Don't add intermediate slide positions, we'll animate the slide
+            slideDetected = true;
             break;
           }
           
           addTrackPos(current);
         }
+        // If no slide was detected but we exited normally, toIdx is already in path
+        // (added in the last iteration when current === toIdx check fails after addTrackPos)
       } else if (backwardDist > 0 && backwardDist <= 17) {
         // Walking backward (e.g., card 4 or backward 10)
         // Backward can also trigger slides if landing on a slide start
@@ -3104,8 +3108,10 @@
         if (slide.ownerSeat === pawnSeatIndex) {
           continue;
         }
-        // Check if slide start is in the path
-        for (let i = 0; i < lastTrackIdx; i++) {
+        // Check if slide start is in the path AFTER the starting position
+        // We start from index 1 because index 0 is where the pawn started this turn.
+        // A slide only triggers if we LAND on the start during this move, not if we started there.
+        for (let i = 1; i < lastTrackIdx; i++) {
           if (path[i].trackIndex === slide.start) {
             return i; // Return index of slide start in path
           }
