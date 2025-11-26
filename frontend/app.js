@@ -70,6 +70,154 @@
   // Interface mode: 'basic' or 'losiento'
   let interfaceMode = 'losiento';
   
+  // ============================================
+  // Audio System for Lo Siento Mode
+  // ============================================
+  
+  // Sound effect audio elements
+  const sfxLoSiento = new Audio('assets/audio/lo siento.mp3');
+  const sfxPieceMove = new Audio('assets/audio/piece moving.mp3');
+  sfxLoSiento.volume = 1.0;  // Max volume
+  sfxPieceMove.volume = 1.0; // Max volume (was 0.5, 3x would exceed max)
+  
+  // Background music playlist (all mp3s except sound effects)
+  const bgMusicTracks = [
+    'assets/audio/bolero-ranchero-mexicano-mexican-mariachi-music-1735.mp3',
+    'assets/audio/cumbia-mexican-banda-2716.mp3',
+    'assets/audio/fuego-lento-264379.mp3',
+    'assets/audio/latin-mexican-spanish-music-391962.mp3',
+    'assets/audio/latin-reggaeton-hip-hop-mexican-background-music-caliente-flow-146085.mp3',
+    'assets/audio/mexican-huapango-banda-2715.mp3',
+    'assets/audio/mexican-mexican-mexico-mariachi-music-290633.mp3',
+    'assets/audio/modern-reggaeton-pop-type-beat-caviar-210829.mp3',
+    'assets/audio/tex-mex-delight-mexican-mariachi-113044.mp3'
+  ];
+  
+  // Shuffle the playlist for variety
+  function shuffleArray(array) {
+    const arr = array.slice();
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+  
+  let bgMusicShuffled = shuffleArray(bgMusicTracks);
+  let bgMusicIndex = 0;
+  const bgMusicPlayer = new Audio();
+  bgMusicPlayer.volume = 0.3;
+  
+  // Audio control state
+  let musicMuted = false;
+  let allSoundMuted = false;
+  let bgMusicStarted = false;
+  
+  // Play a sound effect (respects mute settings)
+  function playSfx(audio) {
+    if (allSoundMuted || interfaceMode !== 'losiento') return;
+    audio.currentTime = 0;
+    audio.play().catch(() => {});
+  }
+  
+  // Play the "lo siento" sound effect
+  function playLoSientoSound() {
+    playSfx(sfxLoSiento);
+  }
+  
+  // Play the piece moving sound effect
+  function playPieceMoveSound() {
+    playSfx(sfxPieceMove);
+  }
+  
+  // Background music control
+  function playNextBgTrack() {
+    if (musicMuted || allSoundMuted || interfaceMode !== 'losiento') {
+      bgMusicPlayer.pause();
+      return;
+    }
+    bgMusicPlayer.src = bgMusicShuffled[bgMusicIndex];
+    bgMusicPlayer.play().catch(() => {});
+  }
+  
+  function skipBgTrack() {
+    bgMusicIndex = (bgMusicIndex + 1) % bgMusicShuffled.length;
+    // Reshuffle when we've gone through all tracks
+    if (bgMusicIndex === 0) {
+      bgMusicShuffled = shuffleArray(bgMusicTracks);
+    }
+    playNextBgTrack();
+  }
+  
+  function toggleMusicMute() {
+    musicMuted = !musicMuted;
+    if (musicMuted) {
+      bgMusicPlayer.pause();
+    } else if (bgMusicStarted && interfaceMode === 'losiento') {
+      bgMusicPlayer.play().catch(() => {});
+    }
+    updateSoundControlButtons();
+  }
+  
+  function toggleAllSoundMute() {
+    allSoundMuted = !allSoundMuted;
+    if (allSoundMuted) {
+      bgMusicPlayer.pause();
+    } else if (bgMusicStarted && !musicMuted && interfaceMode === 'losiento') {
+      bgMusicPlayer.play().catch(() => {});
+    }
+    updateSoundControlButtons();
+  }
+  
+  // When a track ends, play the next one
+  bgMusicPlayer.addEventListener('ended', () => {
+    bgMusicIndex = (bgMusicIndex + 1) % bgMusicShuffled.length;
+    if (bgMusicIndex === 0) {
+      bgMusicShuffled = shuffleArray(bgMusicTracks);
+    }
+    playNextBgTrack();
+  });
+  
+  // Start background music on first user interaction (required by browsers)
+  function startBgMusicOnInteraction() {
+    if (bgMusicStarted) return;
+    if (interfaceMode !== 'losiento') return;
+    bgMusicStarted = true;
+    if (!musicMuted && !allSoundMuted) {
+      playNextBgTrack();
+    }
+    // Remove listeners after first interaction
+    document.removeEventListener('click', startBgMusicOnInteraction);
+    document.removeEventListener('keydown', startBgMusicOnInteraction);
+  }
+  
+  document.addEventListener('click', startBgMusicOnInteraction);
+  document.addEventListener('keydown', startBgMusicOnInteraction);
+  
+  // Update sound control button states
+  function updateSoundControlButtons() {
+    const skipBtn = document.getElementById('sound-skip');
+    const muteBtn = document.getElementById('sound-mute-music');
+    const muteAllBtn = document.getElementById('sound-mute-all');
+    
+    if (skipBtn) {
+      skipBtn.disabled = musicMuted || allSoundMuted;
+      skipBtn.title = 'Skip Song';
+    }
+    if (muteBtn) {
+      // Show music note when music is playing, mute icon when silenced
+      muteBtn.textContent = musicMuted ? '🔇' : '🎵';
+      muteBtn.title = musicMuted ? 'Unmute Music' : 'Silence Music';
+      muteBtn.classList.toggle('sound-btn-active', !musicMuted);
+    }
+    if (muteAllBtn) {
+      // Show speaker when sound is on, mute icon when silenced
+      muteAllBtn.textContent = allSoundMuted ? '🔇' : '🔊';
+      muteAllBtn.title = allSoundMuted ? 'Unmute All Sound' : 'Silence All Sound';
+      muteAllBtn.classList.toggle('sound-btn-active', !allSoundMuted);
+    }
+  }
+  
   // Lo Siento mode DOM elements
   const losientoBoardWrapperEl = document.getElementById('losiento-board-wrapper');
   const losientoBoardEl = document.getElementById('losiento-board');
@@ -2298,16 +2446,6 @@
       upcomingCard = typeof data.card === "string" ? data.card : null;
       upcomingMoves = Array.isArray(data.moves) ? data.moves : [];
 
-      if (upcomingCard === "7") {
-        console.log("[LoSiento][7-preview]", {
-          gameId,
-          turnNumber,
-          discardLen,
-          pawnIds: ids,
-          moves: upcomingMoves,
-        });
-      }
-
       if (selectedPawnId && !legalMoverPawnIds.has(selectedPawnId)) {
         selectedPawnId = null;
         selectedSecondaryPawnId = selectedSecondaryPawnId; // Keep selectedSecondaryPawnId consistent
@@ -2640,6 +2778,9 @@
   // Animate a pawn element with arching motion between positions
   // Arc curves toward board center for a more natural look
   async function lsAnimateArch(pawnEl, startX, startY, endX, endY, duration = 260) {
+    // Play piece moving sound effect
+    playPieceMoveSound();
+    
     const midX = (startX + endX) / 2;
     const midY = (startY + endY) / 2;
     
@@ -2693,6 +2834,9 @@
 
   // Animate a pawn with knockout spin (720° rotation back to start)
   async function lsAnimateKnockout(pawnEl, startX, startY, endX, endY, duration = 600) {
+    // Play "lo siento" sound effect when a pawn gets knocked out
+    playLoSientoSound();
+    
     pawnEl.style.zIndex = '20';
     
     const animation = pawnEl.animate([
@@ -2918,7 +3062,6 @@
   function lsDetectSlideInPath(path, pawnSeatIndex) {
     // Quick check: if path building already detected a slide, use that info
     if (path.slideInfo && typeof path.slideInfo.slideStartPathIdx === 'number') {
-      console.log('[LS Slide] Using embedded slide info:', path.slideInfo);
       return path.slideInfo.slideStartPathIdx;
     }
     
@@ -2953,26 +3096,18 @@
       slides.push({ start: (offset + 10) % TRACK_LEN, end: (offset + 14) % TRACK_LEN, length: 5, ownerSeat: seat });
     }
     
-    console.log('[LS Slide] Last track position:', lastTrackIndex, 'at path index', lastTrackIdx, 'pawn seat:', pawnSeatIndex);
-    console.log('[LS Slide] Known slide ends:', slides.map(s => `${s.end}(seat${s.ownerSeat})`));
-    
     for (const slide of slides) {
       if (lastTrackIndex === slide.end) {
         // Skip if this is the pawn's own slide - you can't slide on your own color
         if (slide.ownerSeat === pawnSeatIndex) {
-          console.log('[LS Slide] Destination matches slide end', slide.end, 'but it belongs to pawn seat', pawnSeatIndex, '- no slide');
           continue;
         }
-        
-        console.log('[LS Slide] Destination matches slide end', slide.end, '(seat', slide.ownerSeat, ') - looking for start', slide.start);
         // Check if slide start is in the path
         for (let i = 0; i < lastTrackIdx; i++) {
           if (path[i].trackIndex === slide.start) {
-            console.log('[LS Slide] Found slide start at path index', i);
             return i; // Return index of slide start in path
           }
         }
-        console.log('[LS Slide] Slide start', slide.start, 'NOT found in path');
       }
     }
     
@@ -3058,6 +3193,8 @@
       if (losientoBoardWrapperEl) losientoBoardWrapperEl.classList.add('hidden');
       if (modeBasicBtn) modeBasicBtn.classList.add('mode-btn-active');
       if (modeLoSientoBtn) modeLoSientoBtn.classList.remove('mode-btn-active');
+      // Pause background music when switching to basic mode
+      bgMusicPlayer.pause();
     } else {
       trackGridEl.classList.add('hidden');
       if (losientoBoardWrapperEl) losientoBoardWrapperEl.classList.remove('hidden');
@@ -3067,6 +3204,10 @@
       requestAnimationFrame(() => {
         updateLoSientoBoardScale();
       });
+      // Resume background music when switching to Lo Siento mode (if started and not muted)
+      if (bgMusicStarted && !musicMuted && !allSoundMuted) {
+        bgMusicPlayer.play().catch(() => {});
+      }
     }
     
     // Re-render the game in the new mode
@@ -3120,9 +3261,6 @@
     // Trigger animation on turn change OR position change (for card 2 extra turns)
     const shouldAnimate = (isTurnChange || hasPositionChanges) && lsPreviousPawnPositions.size > 0;
     
-    // Debug turn tracking
-    console.log('[LS Animation] Turn check:', { gameId, turnNumber, lastTurn: lsLastRenderedTurnNumber, isTurnChange, hasPositionChanges, shouldAnimate, prevPosCount: lsPreviousPawnPositions.size });
-    
     // Find pawns that moved
     const movedPawns = [];
     const knockedOutPawns = [];
@@ -3175,14 +3313,31 @@
         // Remove slide-around entries where that player had another pawn move
         for (let i = slideAroundPawns.length - 1; i >= 0; i--) {
           if (playersWithMovedPawns.has(slideAroundPawns[i].newPos.seatIndex)) {
-            console.log('[LS Animation] Removing false slide-around - player had another pawn move');
             slideAroundPawns.splice(i, 1);
           }
         }
-        
-        if (slideAroundPawns.length > 0) {
-          console.log('[LS Animation] Confirmed slide-around for', slideAroundPawns.length, 'pawns');
-        }
+      }
+    }
+    
+    // Detect swap: two pawns from different players exchanged positions (card 11 swap)
+    // For swaps, we use direct fly animation instead of step-by-step
+    const swapPawnIds = new Set();
+    if (movedPawns.length === 2) {
+      const [p1, p2] = movedPawns;
+      // Check if they swapped: p1's old pos == p2's new pos AND p2's old pos == p1's new pos
+      // Compare by track index for track positions
+      const p1OldTrack = p1.oldPos.type === 'track' ? p1.oldPos.index : null;
+      const p2OldTrack = p2.oldPos.type === 'track' ? p2.oldPos.index : null;
+      const p1NewTrack = p1.newPos.type === 'track' ? p1.newPos.index : null;
+      const p2NewTrack = p2.newPos.type === 'track' ? p2.newPos.index : null;
+      
+      if (p1OldTrack !== null && p2OldTrack !== null && 
+          p1NewTrack !== null && p2NewTrack !== null &&
+          p1OldTrack === p2NewTrack && p2OldTrack === p1NewTrack &&
+          p1.oldPos.seatIndex !== p2.oldPos.seatIndex) {
+        // This is a swap! Mark both pawns
+        swapPawnIds.add(p1.pawnId);
+        swapPawnIds.add(p2.pawnId);
       }
     }
     
@@ -3191,12 +3346,7 @@
     
     // If animation is in progress, don't clear or re-render - let it finish
     if (lsAnimating) {
-      console.log('[LS Animation] Skipping - animation in progress');
       return;
-    }
-    
-    if (hasAnimations) {
-      console.log('[LS Animation] Starting animations for', movedPawns.length, 'moved,', knockedOutPawns.length, 'knocked out,', slideAroundPawns.length, 'slide-around');
     }
     
     // Clear the pawn layer
@@ -3230,20 +3380,23 @@
           
           // Build animation sequence
           const animateMove = async () => {
+            // For swap moves (card 11), use direct fly animation - no stepping
+            if (swapPawnIds.has(pawnId)) {
+              await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, newPos.x, newPos.y, 400);
+              return;
+            }
+            
             // Track-to-track or track-to-safety/home: animate through each tile
             if (oldPos.type === 'track' && (newPos.type === 'track' || newPos.type === 'safety' || newPos.type === 'home')) {
               // Calculate path through tiles
               const path = lsBuildMovePath(oldPos, newPos, pawn.seatIndex, safetyCoordsBySeat, homeCoordBySeat);
-              console.log('[LS Animation] Path for', oldPos.type, '->', newPos.type, ':', path.length, 'steps', path);
               
               if (path.length > 1) {
                 // Check for slide: if destination is slide end and we passed through slide start
                 // Note: pawns cannot slide on their own color's slides
                 const slideStart = lsDetectSlideInPath(path, pawn.seatIndex);
-                console.log('[LS Animation] Slide detection:', slideStart, 'path trackIndices:', path.map(p => p.trackIndex).filter(x => x !== undefined));
                 
                 if (slideStart !== null) {
-                  console.log('[LS Animation] Slide detected! Start at path index', slideStart);
                   // Hop to slide start, then slide
                   const preSlide = path.slice(0, slideStart + 1);
                   if (preSlide.length > 1) {
@@ -3346,8 +3499,6 @@
           const hatY = LS_PAWN_HAT_OFFSET_Y;
           const slideStartX = slideStartPixel.x + pawnOffset + hatX;
           const slideStartY = slideStartPixel.y + pawnOffset + hatY;
-          
-          console.log('[LS Animation] Slide-around: END', oldPos.index, '-> START', slideInfo.start, '-> END', slideInfo.end);
           
           // Animate: hop to slide start, then slide to end
           const animateSlideAround = async () => {
@@ -4104,6 +4255,24 @@
     if (turnActionBtn) {
       turnActionBtn.addEventListener("click", handleTurnAction);
     }
+    
+    // Sound control button handlers
+    const soundSkipBtn = document.getElementById('sound-skip');
+    const soundMuteMusicBtn = document.getElementById('sound-mute-music');
+    const soundMuteAllBtn = document.getElementById('sound-mute-all');
+    
+    if (soundSkipBtn) {
+      soundSkipBtn.addEventListener('click', skipBgTrack);
+    }
+    if (soundMuteMusicBtn) {
+      soundMuteMusicBtn.addEventListener('click', toggleMusicMute);
+    }
+    if (soundMuteAllBtn) {
+      soundMuteAllBtn.addEventListener('click', toggleAllSoundMute);
+    }
+    
+    // Initialize sound button states
+    updateSoundControlButtons();
 
     setScreen("loading");
     fetchState().then(() => {
