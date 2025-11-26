@@ -29,7 +29,7 @@ Replace existing CSS-drawn visuals (board grid, pawn shapes) with image-based as
 - **Knockout animation**: When bumped (via ¡Lo Siento! or landing), the pawn spins (720° rotation) while returning to its start home area
 - **7-split moves**: Both pawns animate **simultaneously** (not sequentially)
 
-### 5. Multiple Pawn Display at Start/Home
+### 5. Multiple Pawn Display at Start/Home ✓
 - When multiple pawns occupy the same space (start circle or home star), spread them out in formations:
   - **4 pawns**: Square formation
   - **3 pawns**: Triangle (2 on top, 1 below from player's perspective, rotating around the board)
@@ -38,6 +38,7 @@ Replace existing CSS-drawn visuals (board grid, pawn shapes) with image-based as
 - Formations rotate based on seat position (Red=0°, Blue=90°, Yellow=180°, Green=270°)
 - Clicking any pawn in a start formation selects one pawn (order doesn't matter, one at a time)
 - All pawns in formation at start should highlight when a legal move is available
+- **Implementation**: Uses `lsGetFormationOffsets()` with rotation transforms per seat
 
 ### 6. Tile Highlighting
 - Clickable/selectable tiles must have a visual highlight overlay on top of the board image
@@ -269,31 +270,21 @@ async function animatePawnMove(pawnEl, from, to, type = 'arch') {
 }
 ```
 
-#### 6. Stacked Pawn Counter
+#### 6. Spread Pawn Formation (replaces Stacked Pawn Counter)
 
-```html
-<div class="pawn-stack" style="--x: 100px; --y: 50px;">
-  <img src="future_assets/red pawn.png" class="pawn-img" />
-  <span class="pawn-count">3</span>
-</div>
-```
+Multiple pawns at start/home are spread out in formations rather than stacked with a counter:
 
-```css
-.pawn-stack {
-  position: absolute;
-  transform: translate(var(--x), var(--y));
-}
-.pawn-count {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 14px;
-  font-weight: 700;
-  color: #000;
-  text-shadow: 0 0 2px #fff;
+```javascript
+// Formation offsets rotate based on seat position
+function lsGetFormationOffsets(count, seatIndex) {
+  const rotations = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2];
+  const rotation = rotations[seatIndex] || 0;
+  // Returns array of {x, y} offsets for each pawn
+  // 1 pawn: centered, 2 pawns: line, 3 pawns: triangle, 4 pawns: square
 }
 ```
+
+Pawns are sorted by Y position so bottom pawns' hats correctly overlap top pawns.
 
 #### 7. Highlight Overlays
 
@@ -320,34 +311,35 @@ async function animatePawnMove(pawnEl, from, to, type = 'arch') {
 
 ## Implementation Phases
 
-### Phase 1: Foundation
-- [ ] Move assets from `future_assets/` to `assets/` (or keep in place)
-- [ ] Add interface toggle buttons to game UI
-- [ ] Create `interfaceMode` state variable
-- [ ] Create Lo Siento board container (hidden by default)
+### Phase 1: Foundation ✓
+- [x] Move assets from `future_assets/` to `assets/`
+- [x] Add interface toggle buttons to game UI
+- [x] Create `interfaceMode` state variable
+- [x] Create Lo Siento board container (hidden by default)
 
-### Phase 2: Static Board Rendering
-- [ ] Render board background image
-- [ ] Map tile coordinates to pixel positions
-- [ ] Render pawns at correct positions (no animation)
-- [ ] Implement highlight overlays for legal moves
+### Phase 2: Static Board Rendering ✓
+- [x] Render board background image
+- [x] Map tile coordinates to pixel positions
+- [x] Render pawns at correct positions (no animation)
+- [x] Implement highlight overlays for legal moves
 
-### Phase 3: Interactivity
-- [ ] Click detection on highlight overlays
-- [ ] Pawn selection in Lo Siento mode
-- [ ] Wire up to existing game logic (same handlers as basic mode)
+### Phase 3: Interactivity ✓
+- [x] Click detection on highlight overlays
+- [x] Pawn selection in Lo Siento mode
+- [x] Wire up to existing game logic (same handlers as basic mode)
 
-### Phase 4: Animations
-- [ ] Implement arching movement animation
-- [ ] Implement slide animation
-- [ ] Implement knockout spin animation
-- [ ] Handle multi-tile traversal (animate through each tile sequentially)
+### Phase 4: Animations ✓
+- [x] Implement arching movement animation
+- [x] Implement slide animation
+- [x] Implement knockout spin animation
+- [x] Handle multi-tile traversal (animate through each tile sequentially)
+- **Implementation**: Detects turn changes, compares pawn positions, and triggers appropriate CSS animations
 
-### Phase 5: Polish
-- [ ] Stacked pawn counter display
-- [ ] Smooth transitions between game states
-- [ ] Performance optimization (preload images, use will-change)
-- [ ] Test on mobile/tablet viewports
+### Phase 5: Polish ✓
+- [x] ~~Stacked pawn counter display~~ → Spread formation display (pawns fan out instead of stacking with counter)
+- [x] Smooth transitions between game states (via animation system)
+- [x] Performance optimization (preload images, use will-change)
+- [x] Responsive scaling on mobile/tablet viewports
 
 ---
 
@@ -375,5 +367,5 @@ async function animatePawnMove(pawnEl, from, to, type = 'arch') {
 
 ---
 
-*Document created: November 2024*
-*Last updated: November 2024*
+*Document created: November 2024*  
+*Last updated: November 25, 2024*

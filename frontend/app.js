@@ -39,7 +39,9 @@
   const cardHistoryEl = document.getElementById("card-history");
   const turnActionBtn = document.getElementById("turn-action");
   const leaveGameBtn = document.getElementById("leave-game");
-  const autoplayBotBtn = document.getElementById("autoplay-bot");
+  const autoplayOffBtn = document.getElementById("autoplay-off");
+  const autoplaySlowBtn = document.getElementById("autoplay-slow");
+  const autoplayFastBtn = document.getElementById("autoplay-fast");
 
   const toastEl = document.getElementById("toast");
 
@@ -59,7 +61,8 @@
   let cardHistoryExpandedTurns = new Set();
   let autoplayBotEnabled = false;
   let autoplayTimeout = null;
-  let autoplayPreferredOn = true;
+  let autoplaySpeed = 2; // 0=off, 1=slow, 2=fast (default: fast)
+  const AUTOPLAY_DELAYS = { 0: 0, 1: 2500, 2: 750 };
   let lastPreviewGameId = null;
   let lastPreviewTurnNumber = null;
   let lastPreviewDiscardLength = null;
@@ -68,11 +71,47 @@
   let interfaceMode = 'losiento';
   
   // Lo Siento mode DOM elements
+  const losientoBoardWrapperEl = document.getElementById('losiento-board-wrapper');
   const losientoBoardEl = document.getElementById('losiento-board');
   const losientoHighlightsEl = document.getElementById('losiento-highlights');
   const losientoPawnsEl = document.getElementById('losiento-pawns');
   const modeBasicBtn = document.getElementById('mode-basic');
   const modeLoSientoBtn = document.getElementById('mode-losiento');
+
+  // Calculate and apply scale factor for Lo Siento board
+  function updateLoSientoBoardScale() {
+    if (!losientoBoardWrapperEl || !losientoBoardEl) return;
+    
+    // Measure the parent container (game-middle column) for stable reference
+    const parent = losientoBoardWrapperEl.parentElement;
+    if (!parent) return;
+    
+    const parentRect = parent.getBoundingClientRect();
+    const availableWidth = parentRect.width - 16; // Account for padding
+    const availableHeight = window.innerHeight - 120; // Leave room for UI
+    
+    // The board is 800x800px, calculate scale to fit in available space
+    const scaleX = availableWidth / 800;
+    const scaleY = availableHeight / 800;
+    // Scale up to fill space nicely
+    const scale = Math.min(scaleX, scaleY) * 1.11;
+    
+    losientoBoardEl.style.setProperty('--ls-scale', scale);
+    losientoBoardWrapperEl.style.width = `${800 * scale}px`;
+    losientoBoardWrapperEl.style.height = `${800 * scale}px`;
+  }
+  
+  // Throttled resize handler
+  let resizeTimeout = null;
+  function onWindowResize() {
+    if (resizeTimeout) return;
+    resizeTimeout = setTimeout(() => {
+      resizeTimeout = null;
+      updateLoSientoBoardScale();
+    }, 50);
+  }
+  
+  window.addEventListener('resize', onWindowResize);
   
   // Animation state for Lo Siento mode
   let lsAnimationQueue = [];
@@ -147,6 +186,13 @@
     Object.values(screens).forEach((el) => el.classList.add("hidden"));
     const el = screens[name];
     if (el) el.classList.remove("hidden");
+    
+    // Update board scale when game screen is shown
+    if (name === 'game') {
+      requestAnimationFrame(() => {
+        updateLoSientoBoardScale();
+      });
+    }
   }
 
   async function api(path, options = {}) {
@@ -214,16 +260,26 @@
       clearTimeout(autoplayTimeout);
       autoplayTimeout = null;
     }
-    if (autoplayBotBtn) {
-      autoplayBotBtn.classList.remove("autoplay-on");
-      autoplayBotBtn.textContent = "Autoplay bot turns (off)";
+  }
+
+  function setAutoplaySpeed(speed) {
+    autoplaySpeed = speed;
+    // Update button active states
+    if (autoplayOffBtn) autoplayOffBtn.classList.toggle('autoplay-btn-active', speed === 0);
+    if (autoplaySlowBtn) autoplaySlowBtn.classList.toggle('autoplay-btn-active', speed === 1);
+    if (autoplayFastBtn) autoplayFastBtn.classList.toggle('autoplay-btn-active', speed === 2);
+    
+    if (speed === 0) {
+      stopAutoplay();
+    } else {
+      startAutoplay();
     }
   }
 
   function scheduleAutoplayTick() {
     if (!autoplayBotEnabled) return;
     if (autoplayTimeout) return;
-    autoplayTimeout = setTimeout(runAutoplayTick, 750);
+    autoplayTimeout = setTimeout(runAutoplayTick, AUTOPLAY_DELAYS[autoplaySpeed] || 750);
   }
 
   async function runAutoplayTick() {
@@ -249,11 +305,9 @@
   }
 
   function startAutoplay() {
-    if (!autoplayBotBtn) return;
+    if (autoplaySpeed === 0) return;
     if (autoplayBotEnabled) return;
     autoplayBotEnabled = true;
-    autoplayBotBtn.classList.add("autoplay-on");
-    autoplayBotBtn.textContent = "Autoplay bot turns (on)";
     scheduleAutoplayTick();
   }
 
@@ -291,8 +345,8 @@
       setScreen("game");
       startPolling();
       refreshLegalMovers();
-      // Only host can use autoplay
-      if (isHost() && autoplayPreferredOn && !autoplayBotEnabled) {
+      // Only host can use autoplay - resume if speed is set
+      if (isHost() && autoplaySpeed > 0 && !autoplayBotEnabled) {
         startAutoplay();
       }
     } else {
@@ -854,10 +908,19 @@
       turnActionBtn.textContent = label;
     }
 
-    // Update autoplay button - only host can use it
-    if (autoplayBotBtn) {
-      autoplayBotBtn.disabled = !amHost;
-      autoplayBotBtn.title = amHost ? "" : "Only the host can control autoplay";
+    // Update autoplay buttons - only host can use them
+    const autoplayTitle = amHost ? "" : "Only the host can control autoplay";
+    if (autoplayOffBtn) {
+      autoplayOffBtn.disabled = !amHost;
+      autoplayOffBtn.title = autoplayTitle;
+    }
+    if (autoplaySlowBtn) {
+      autoplaySlowBtn.disabled = !amHost;
+      autoplaySlowBtn.title = autoplayTitle;
+    }
+    if (autoplayFastBtn) {
+      autoplayFastBtn.disabled = !amHost;
+      autoplayFastBtn.title = autoplayTitle;
     }
 
     // Track grid 0-59 laid out on a 16x16 outer ring (constants defined at module scope)
@@ -2508,9 +2571,50 @@
     return null;
   }
 
+  // Get the owner seat of a slide if trackIndex is a slide START
+  // Returns seat index (0-3) or null if not a slide start
+  function lsGetSlideOwner(trackIndex) {
+    const TRACK_SEGMENT_LEN = 15;
+    for (let seat = 0; seat < 4; seat++) {
+      const offset = ((seat + 2) % 4) * TRACK_SEGMENT_LEN;
+      const slide1Start = (offset + 1) % TRACK_LEN;
+      const slide2Start = (offset + 10) % TRACK_LEN;
+      if (trackIndex === slide1Start || trackIndex === slide2Start) {
+        return seat;
+      }
+    }
+    return null;
+  }
+
   // Get slide info if a track index is a slide END (and not owned by pawnSeatIndex)
   // Returns { start, end, ownerSeat } or null
   function lsGetSlideForEnd(trackIndex, pawnSeatIndex) {
+    const TRACK_SEGMENT_LEN = 15;
+    for (let seat = 0; seat < 4; seat++) {
+      // Skip pawn's own slides - can't slide on your own color
+      if (seat === pawnSeatIndex) continue;
+      
+      const offset = ((seat + 2) % 4) * TRACK_SEGMENT_LEN;
+      // First slide (4 tiles)
+      const slide1Start = (offset + 1) % TRACK_LEN;
+      const slide1End = (slide1Start + 3) % TRACK_LEN;
+      if (trackIndex === slide1End) {
+        return { start: slide1Start, end: slide1End, ownerSeat: seat };
+      }
+      // Second slide (5 tiles)
+      const slide2Start = (offset + 10) % TRACK_LEN;
+      const slide2End = (slide2Start + 4) % TRACK_LEN;
+      if (trackIndex === slide2End) {
+        return { start: slide2Start, end: slide2End, ownerSeat: seat };
+      }
+    }
+    return null;
+  }
+
+  // Get slide info if landing on a slide END after backward movement
+  // (meaning we walked backward onto the slide START and slid forward)
+  // Returns { start, end, ownerSeat } or null
+  function lsGetSlideForBackwardLanding(trackIndex, pawnSeatIndex) {
     const TRACK_SEGMENT_LEN = 15;
     for (let seat = 0; seat < 4; seat++) {
       // Skip pawn's own slides - can't slide on your own color
@@ -2567,19 +2671,24 @@
     pawnEl.style.transform = `translate(${endX}px, ${endY}px)`;
   }
 
-  // Animate a pawn element with sliding motion
-  async function lsAnimateSlide(pawnEl, startX, startY, endX, endY, duration = 650) {
+  // Animate a pawn element with sliding motion along a slide
+  // Uses ease-out for a natural deceleration at the end
+  async function lsAnimateSlide(pawnEl, startX, startY, endX, endY, duration = 600) {
+    // Raise the pawn slightly during the slide for visual feedback
+    pawnEl.style.zIndex = '15';
+    
     const animation = pawnEl.animate([
-      { transform: `translate(${startX}px, ${startY}px)` },
-      { transform: `translate(${endX}px, ${endY}px)` }
+      { transform: `translate(${startX}px, ${startY}px)`, offset: 0 },
+      { transform: `translate(${endX}px, ${endY}px)`, offset: 1 }
     ], {
       duration: duration,
-      easing: 'linear',
+      easing: 'ease-out',
       fill: 'forwards'
     });
     
     await animation.finished;
     pawnEl.style.transform = `translate(${endX}px, ${endY}px)`;
+    pawnEl.style.zIndex = '';
   }
 
   // Animate a pawn with knockout spin (720° rotation back to start)
@@ -2667,34 +2776,61 @@
       
       // Try to detect slide: walk forward from old position
       // If we hit a slide start before reaching destination, and destination is slide end
-      if (forwardDist > 0 && forwardDist <= 12) {
+      // Note: forwardDist can exceed 12 if a slide was triggered (max 12 card + 4 slide = 16)
+      if (forwardDist > 0 && forwardDist <= 17) {
         // Walking forward
         let current = fromIdx;
         addTrackPos(current);
         
-        while (current !== toIdx) {
+        // Safety limit to prevent infinite loops
+        let steps = 0;
+        const maxSteps = TRACK_LEN + 10;
+        while (current !== toIdx && steps < maxSteps) {
+          steps++;
           current = (current + 1) % TRACK_LEN;
           
-          // Check if this is a slide start
+          // Check if this is a slide start (for opponent's slide only - can't slide on your own)
           const slideEnd = lsGetSlideEnd(current);
-          if (slideEnd !== null && slideEnd === toIdx) {
-            // This is a slide! Mark it
+          const slideOwner = lsGetSlideOwner(current);
+          if (slideEnd !== null && slideEnd === toIdx && slideOwner !== seatIndex) {
+            // This is a slide on an opponent's slide! Mark it
             slideStartIdx = path.length; // Index in path array
             addTrackPos(current);
-            path.slideInfo = { slideStartIdx, slideEnd };
-            // Don't add intermediate slide positions, jump to end
+            // Add the slide END position to the path so detection works
+            addTrackPos(toIdx);
+            path.slideInfo = { slideStartPathIdx: slideStartIdx, slideEndPathIdx: path.length - 1 };
+            // Don't add intermediate slide positions, we'll animate the slide
             break;
           }
           
           addTrackPos(current);
         }
-      } else if (backwardDist > 0 && backwardDist <= 12) {
-        // Walking backward (e.g., card 4 or backward 7)
+      } else if (backwardDist > 0 && backwardDist <= 17) {
+        // Walking backward (e.g., card 4 or backward 10)
+        // Backward can also trigger slides if landing on a slide start
+        // Note: threshold increased to 17 to account for potential slide effects
         let current = fromIdx;
         addTrackPos(current);
         
-        while (current !== toIdx) {
+        // Safety limit to prevent infinite loops
+        let steps = 0;
+        const maxSteps = TRACK_LEN + 10;
+        while (current !== toIdx && steps < maxSteps) {
+          steps++;
           current = (current - 1 + TRACK_LEN) % TRACK_LEN;
+          
+          // Check if this is a slide start (for opponent's slide only - can't slide on your own)
+          const slideEnd = lsGetSlideEnd(current);
+          const slideOwner = lsGetSlideOwner(current);
+          if (slideEnd !== null && slideEnd === toIdx && slideOwner !== seatIndex) {
+            // Backward movement landed on a slide start and slid forward
+            const slideStartIdx = path.length;
+            addTrackPos(current);
+            addTrackPos(toIdx);
+            path.slideInfo = { slideStartPathIdx: slideStartIdx, slideEndPathIdx: path.length - 1 };
+            break;
+          }
+          
           addTrackPos(current);
         }
       } else {
@@ -2712,7 +2848,11 @@
       let current = fromIdx;
       addTrackPos(current);
       
-      while (current !== safetyEntryIdx) {
+      // Safety limit to prevent infinite loops
+      let steps = 0;
+      const maxSteps = TRACK_LEN + 10;
+      while (current !== safetyEntryIdx && steps < maxSteps) {
+        steps++;
         current = (current + 1) % TRACK_LEN;
         addTrackPos(current);
       }
@@ -2731,7 +2871,11 @@
       let current = fromIdx;
       addTrackPos(current);
       
-      while (current !== safetyEntryIdx) {
+      // Safety limit to prevent infinite loops
+      let steps = 0;
+      const maxSteps = TRACK_LEN + 10;
+      while (current !== safetyEntryIdx && steps < maxSteps) {
+        steps++;
         current = (current + 1) % TRACK_LEN;
         addTrackPos(current);
       }
@@ -2772,6 +2916,12 @@
   // Detect if a path includes a slide - returns the index in path where slide starts, or null
   // pawnSeatIndex is needed because pawns cannot slide on their own color's slides
   function lsDetectSlideInPath(path, pawnSeatIndex) {
+    // Quick check: if path building already detected a slide, use that info
+    if (path.slideInfo && typeof path.slideInfo.slideStartPathIdx === 'number') {
+      console.log('[LS Slide] Using embedded slide info:', path.slideInfo);
+      return path.slideInfo.slideStartPathIdx;
+    }
+    
     // A slide occurred if:
     // 1. We have track positions in the path
     // 2. There's a position that's a slide START (of an opponent's slide)
@@ -2905,14 +3055,18 @@
     
     if (mode === 'basic') {
       trackGridEl.classList.remove('hidden');
-      if (losientoBoardEl) losientoBoardEl.classList.add('hidden');
+      if (losientoBoardWrapperEl) losientoBoardWrapperEl.classList.add('hidden');
       if (modeBasicBtn) modeBasicBtn.classList.add('mode-btn-active');
       if (modeLoSientoBtn) modeLoSientoBtn.classList.remove('mode-btn-active');
     } else {
       trackGridEl.classList.add('hidden');
-      if (losientoBoardEl) losientoBoardEl.classList.remove('hidden');
+      if (losientoBoardWrapperEl) losientoBoardWrapperEl.classList.remove('hidden');
       if (modeBasicBtn) modeBasicBtn.classList.remove('mode-btn-active');
       if (modeLoSientoBtn) modeLoSientoBtn.classList.add('mode-btn-active');
+      // Update scale when switching to Lo Siento mode
+      requestAnimationFrame(() => {
+        updateLoSientoBoardScale();
+      });
     }
     
     // Re-render the game in the new mode
@@ -2938,9 +3092,6 @@
                          lsLastRenderedTurnNumber !== null && 
                          turnNumber !== lsLastRenderedTurnNumber;
     
-    // Debug turn tracking
-    console.log('[LS Animation] Turn check:', { gameId, turnNumber, lastTurn: lsLastRenderedTurnNumber, isTurnChange, prevPosCount: lsPreviousPawnPositions.size });
-    
     // Build current pawn positions map
     const currentPawnPositions = new Map();
     pawns.forEach(pawn => {
@@ -2955,14 +3106,42 @@
       });
     });
     
-    // Find pawns that moved
-    const movedPawns = [];
-    const knockedOutPawns = [];
-    
-    if (isTurnChange && lsPreviousPawnPositions.size > 0) {
+    // Also detect position changes directly (handles card 2 where turn number may not change)
+    let hasPositionChanges = false;
+    if (gameId === lsLastRenderedGameId && lsPreviousPawnPositions.size > 0) {
       currentPawnPositions.forEach((newPos, pawnId) => {
         const oldPos = lsPreviousPawnPositions.get(pawnId);
         if (oldPos && (oldPos.x !== newPos.x || oldPos.y !== newPos.y)) {
+          hasPositionChanges = true;
+        }
+      });
+    }
+    
+    // Trigger animation on turn change OR position change (for card 2 extra turns)
+    const shouldAnimate = (isTurnChange || hasPositionChanges) && lsPreviousPawnPositions.size > 0;
+    
+    // Debug turn tracking
+    console.log('[LS Animation] Turn check:', { gameId, turnNumber, lastTurn: lsLastRenderedTurnNumber, isTurnChange, hasPositionChanges, shouldAnimate, prevPosCount: lsPreviousPawnPositions.size });
+    
+    // Find pawns that moved
+    const movedPawns = [];
+    const knockedOutPawns = [];
+    const slideAroundPawns = []; // Special case: pawn at slide END moved backward to START and slid back
+    
+    // Determine which player just moved (the one before currentSeat)
+    // Only check slide-around for that player's pawns to avoid false animations
+    const currentSeat = gameState.currentSeat;
+    const numPlayers = seats.filter(s => s).length || 4;
+    // For card 2 (same player continues), previousSeat calculation may be off, but it's only used for slide-around detection
+    const previousSeat = typeof currentSeat === 'number' ? (currentSeat - 1 + numPlayers) % numPlayers : null;
+    
+    if (shouldAnimate) {
+      currentPawnPositions.forEach((newPos, pawnId) => {
+        const oldPos = lsPreviousPawnPositions.get(pawnId);
+        if (!oldPos) return;
+        
+        if (oldPos.x !== newPos.x || oldPos.y !== newPos.y) {
+          // Pawn moved to a different position
           // Check if pawn was knocked out (moved to start from track/safety)
           const wasOnTrackOrSafety = oldPos.type === 'track' || oldPos.type === 'safety';
           const isNowAtStart = newPos.type === 'start';
@@ -2972,12 +3151,43 @@
           } else {
             movedPawns.push({ pawnId, oldPos, newPos });
           }
+        } else if (oldPos.type === 'track' && newPos.type === 'track' && oldPos.index === newPos.index) {
+          // Same position - check for slide-around case
+          // ONLY for the player who just moved to avoid false animations
+          if (previousSeat !== null && newPos.seatIndex === previousSeat) {
+            const slideInfo = lsGetSlideForEnd(newPos.index, newPos.seatIndex);
+            if (slideInfo) {
+              // Mark as potential slide-around (will verify after loop)
+              slideAroundPawns.push({ pawnId, oldPos, newPos, slideInfo });
+            }
+          }
         }
       });
+      
+      // Filter slide-around: only keep if NO other pawns from the same player actually moved
+      // (If another pawn moved, the "same position" pawn didn't move this turn)
+      if (slideAroundPawns.length > 0) {
+        const playersWithMovedPawns = new Set([
+          ...movedPawns.map(p => p.newPos.seatIndex),
+          ...knockedOutPawns.map(p => p.oldPos.seatIndex)
+        ]);
+        
+        // Remove slide-around entries where that player had another pawn move
+        for (let i = slideAroundPawns.length - 1; i >= 0; i--) {
+          if (playersWithMovedPawns.has(slideAroundPawns[i].newPos.seatIndex)) {
+            console.log('[LS Animation] Removing false slide-around - player had another pawn move');
+            slideAroundPawns.splice(i, 1);
+          }
+        }
+        
+        if (slideAroundPawns.length > 0) {
+          console.log('[LS Animation] Confirmed slide-around for', slideAroundPawns.length, 'pawns');
+        }
+      }
     }
     
     // If there are animations to play, handle them
-    const hasAnimations = movedPawns.length > 0 || knockedOutPawns.length > 0;
+    const hasAnimations = movedPawns.length > 0 || knockedOutPawns.length > 0 || slideAroundPawns.length > 0;
     
     // If animation is in progress, don't clear or re-render - let it finish
     if (lsAnimating) {
@@ -2986,7 +3196,7 @@
     }
     
     if (hasAnimations) {
-      console.log('[LS Animation] Starting animations for', movedPawns.length, 'moved,', knockedOutPawns.length, 'knocked out');
+      console.log('[LS Animation] Starting animations for', movedPawns.length, 'moved,', knockedOutPawns.length, 'knocked out,', slideAroundPawns.length, 'slide-around');
     }
     
     // Clear the pawn layer
@@ -2998,8 +3208,12 @@
       lsAnimating = true;
       
       // Render all non-moving pawns at their current positions
-      lsRenderStaticPawns(gameState, colors, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat, 
-                          new Set([...movedPawns.map(p => p.pawnId), ...knockedOutPawns.map(p => p.pawnId)]));
+      const animatingPawnIds = new Set([
+        ...movedPawns.map(p => p.pawnId), 
+        ...knockedOutPawns.map(p => p.pawnId),
+        ...slideAroundPawns.map(p => p.pawnId)
+      ]);
+      lsRenderStaticPawns(gameState, colors, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat, animatingPawnIds);
       
       // Create and animate moving pawns
       (async () => {
@@ -3038,7 +3252,7 @@
                   // Slide from start to end
                   const slideStartPos = path[slideStart];
                   const slideEndPos = path[path.length - 1];
-                  await lsAnimateSlide(pawnEl, slideStartPos.x, slideStartPos.y, slideEndPos.x, slideEndPos.y, 400);
+                  await lsAnimateSlide(pawnEl, slideStartPos.x, slideStartPos.y, slideEndPos.x, slideEndPos.y, 550);
                 } else {
                   // Normal multi-hop animation through each tile
                   await lsAnimateMultiHop(pawnEl, path, 130);
@@ -3048,26 +3262,40 @@
                 await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, newPos.x, newPos.y, 195);
               }
             } 
-            // Start to track: hop out, then slide if landing on opponent's slide
+            // Start to track: hop out, check if we LANDED on a slide start (not end!)
             else if (oldPos.type === 'start' && newPos.type === 'track') {
-              // Check if destination is a slide end (Lo Siento landing on slide start triggers slide)
-              const slideInfo = lsGetSlideForEnd(newPos.index, pawn.seatIndex);
-              if (slideInfo) {
-                // Pawn landed on a slide start and slid to the end
-                // Animate: hop to slide start, then slide to end
-                const slideStartPixel = lsTrackIndexToPixel(slideInfo.start);
-                const pawnOffset = (LS_TILE_SIZE - LS_PAWN_SIZE) / 2;
-                const hatX = LS_PAWN_HAT_OFFSET_X;
-                const hatY = LS_PAWN_HAT_OFFSET_Y;
-                const slideStartX = slideStartPixel.x + pawnOffset + hatX;
-                const slideStartY = slideStartPixel.y + pawnOffset + hatY;
-                
-                // First hop to slide start
-                await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, slideStartX, slideStartY, 260);
-                // Then slide to end
-                await lsAnimateSlide(pawnEl, slideStartX, slideStartY, newPos.x, newPos.y, 400);
-              } else {
-                // Normal single hop
+              // For Lo Siento/Sorry!, we land where the bumped pawn was
+              // Find if there was a knocked-out pawn to determine our ACTUAL landing spot
+              const knockedOut = knockedOutPawns.find(ko => ko.oldPos.seatIndex !== pawn.seatIndex);
+              const landingIndex = knockedOut ? knockedOut.oldPos.index : null;
+              
+              // A slide ONLY occurs if we landed ON a slide START (not end, not middle)
+              // Check if our landing position (where we bumped from) was a slide START
+              let slideTriggered = false;
+              if (landingIndex !== null) {
+                const slideEndFromLanding = lsGetSlideEnd(landingIndex);
+                // If landing on a slide START leads to our destination, we slid
+                if (slideEndFromLanding !== null && slideEndFromLanding === newPos.index) {
+                  // Verify it's not our own slide
+                  const slideOwner = lsGetSlideOwner(landingIndex);
+                  if (slideOwner !== pawn.seatIndex) {
+                    slideTriggered = true;
+                    // Animate: hop to slide start (landing), then slide to end
+                    const slideStartPixel = lsTrackIndexToPixel(landingIndex);
+                    const pawnOffset = (LS_TILE_SIZE - LS_PAWN_SIZE) / 2;
+                    const hatX = LS_PAWN_HAT_OFFSET_X;
+                    const hatY = LS_PAWN_HAT_OFFSET_Y;
+                    const slideStartX = slideStartPixel.x + pawnOffset + hatX;
+                    const slideStartY = slideStartPixel.y + pawnOffset + hatY;
+                    
+                    await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, slideStartX, slideStartY, 260);
+                    await lsAnimateSlide(pawnEl, slideStartX, slideStartY, newPos.x, newPos.y, 550);
+                  }
+                }
+              }
+              
+              if (!slideTriggered) {
+                // No slide - just hop directly to destination
                 await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, newPos.x, newPos.y, 260);
               }
             }
@@ -3100,6 +3328,36 @@
           
           // Slower knockout spin (1.5 seconds)
           animationPromises.push(lsAnimateKnockout(pawnEl, oldPos.x, oldPos.y, newPos.x, newPos.y, 1500));
+        }
+        
+        // Animate slide-around (pawn at slide END moved backward to START and slid back to END)
+        for (const { pawnId, oldPos, newPos, slideInfo } of slideAroundPawns) {
+          const pawn = pawns.find(p => p.pawnId === pawnId);
+          if (!pawn) continue;
+          
+          const color = colors[pawn.seatIndex] || 'red';
+          const pawnEl = lsCreatePawnElement(pawnId, color, oldPos.x, oldPos.y);
+          losientoPawnsEl.appendChild(pawnEl);
+          
+          // Calculate slide start position (the pawn moved backward to here, then slid)
+          const slideStartPixel = lsTrackIndexToPixel(slideInfo.start);
+          const pawnOffset = (LS_TILE_SIZE - LS_PAWN_SIZE) / 2;
+          const hatX = LS_PAWN_HAT_OFFSET_X;
+          const hatY = LS_PAWN_HAT_OFFSET_Y;
+          const slideStartX = slideStartPixel.x + pawnOffset + hatX;
+          const slideStartY = slideStartPixel.y + pawnOffset + hatY;
+          
+          console.log('[LS Animation] Slide-around: END', oldPos.index, '-> START', slideInfo.start, '-> END', slideInfo.end);
+          
+          // Animate: hop to slide start, then slide to end
+          const animateSlideAround = async () => {
+            // First: hop from slide END to slide START (backward movement)
+            await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, slideStartX, slideStartY, 300);
+            // Then: slide from START to END
+            await lsAnimateSlide(pawnEl, slideStartX, slideStartY, newPos.x, newPos.y, 500);
+          };
+          
+          animationPromises.push(animateSlideAround());
         }
         
         await Promise.all(animationPromises);
@@ -3825,22 +4083,23 @@
     leaveLobbyBtn.addEventListener("click", handleLeave);
 
     leaveGameBtn.addEventListener("click", handleLeave);
-    if (autoplayBotBtn) {
-      autoplayBotBtn.textContent = "Autoplay bot turns (off)";
-      autoplayBotBtn.addEventListener("click", () => {
-        // Only host can toggle autoplay
-        if (!isHost()) {
-          showToast("Only the host can control autoplay");
-          return;
-        }
-        if (autoplayBotEnabled) {
-          autoplayPreferredOn = false;
-          stopAutoplay();
-        } else {
-          autoplayPreferredOn = true;
-          startAutoplay();
-        }
-      });
+    
+    // Autoplay speed button handlers
+    function handleAutoplayClick(speed) {
+      if (!isHost()) {
+        showToast("Only the host can control autoplay");
+        return;
+      }
+      setAutoplaySpeed(speed);
+    }
+    if (autoplayOffBtn) {
+      autoplayOffBtn.addEventListener("click", () => handleAutoplayClick(0));
+    }
+    if (autoplaySlowBtn) {
+      autoplaySlowBtn.addEventListener("click", () => handleAutoplayClick(1));
+    }
+    if (autoplayFastBtn) {
+      autoplayFastBtn.addEventListener("click", () => handleAutoplayClick(2));
     }
     if (turnActionBtn) {
       turnActionBtn.addEventListener("click", handleTurnAction);

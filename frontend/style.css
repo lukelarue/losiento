@@ -28,7 +28,7 @@ body {
 }
 
 .app-main {
-  padding: 1rem 1.5rem 2rem;
+  padding: 0.5rem 0.75rem 0.5rem;
 }
 
 .app-footer {
@@ -43,8 +43,9 @@ body {
 }
 
 #screen-game {
-  min-height: calc(100vh - 4rem);
   max-width: 100%;
+  max-height: 100vh;
+  overflow: hidden;
 }
 
 .hidden {
@@ -499,16 +500,12 @@ button:disabled {
   background: #991b1b;
 }
 
-#autoplay-bot.autoplay-on {
-  background: #1d4ed8;
-  box-shadow: 0 0 0 1px #93c5fd;
-}
-
 .game-layout {
   display: grid;
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 2.2fr) minmax(0, 0.8fr);
-  gap: 1rem;
-  margin-top: 0.5rem;
+  gap: 0.5rem;
+  margin-top: 0;
+  max-height: calc(100vh - 2rem);
 }
 
 .game-left {
@@ -535,30 +532,88 @@ button:disabled {
   gap: 0.5rem;
 }
 
-.game-top-row #autoplay-bot {
-  margin-left: auto;
-  min-width: 8rem;
-  font-size: 1rem;
-  padding: 0.55rem 1.4rem;
-  white-space: nowrap;
-}
-
-.game-right-top {
+.game-left-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 0.5rem;
+  margin-top: 4px;
+  padding-top: 2px;
 }
 
-.game-right-top button {
+.game-left-top button {
   font-size: 0.7rem;
   padding: 0.35rem 0.6rem;
   white-space: nowrap;
+  margin-top: 0;
+}
+
+/* Settings sections for autoplay & board style */
+.settings-section {
+  margin-top: 0.5rem;
+}
+
+.settings-section h4 {
+  margin: 0 0 0.35rem 0.2rem;
+  font-size: 0.7rem;
+  color: #9ca3af;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Autoplay toggle buttons */
+.autoplay-toggle {
+  display: flex;
+  gap: 0.35rem;
+  margin-left: 0.2rem;
+}
+
+.autoplay-btn {
+  padding: 0.35rem 0.7rem;
+  border-radius: 9999px;
+  border: 1px solid #374151;
+  background: #111827;
+  color: #9ca3af;
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.autoplay-btn:hover {
+  background: #1f2937;
+  border-color: #4b5563;
+  color: #e5e7eb;
+}
+
+.autoplay-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#autoplay-off.autoplay-btn-active {
+  background: #374151;
+  border-color: #6b7280;
+  color: #e5e7eb;
+}
+
+#autoplay-slow.autoplay-btn-active {
+  background: #b45309;
+  border-color: #f59e0b;
+  color: #fff;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+}
+
+#autoplay-fast.autoplay-btn-active {
+  background: #15803d;
+  border-color: #22c55e;
+  color: #fff;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
 }
 
 .board-panel {
   background: #020617;
-  padding: 0.75rem;
+  padding: 0.5rem;
   border-radius: 0.5rem;
   border: 1px solid #111827;
   overflow: hidden;
@@ -1164,6 +1219,7 @@ button:disabled {
   flex-direction: row;
   gap: 0.35rem;
   margin-top: 0.4rem;
+  margin-left: 0.2rem;
 }
 
 .mode-btn {
@@ -1207,13 +1263,24 @@ button:disabled {
   box-shadow: 0 0 0 2px #fbbf24, 0 0 10px rgba(251, 191, 36, 0.5);
 }
 
-/* Lo Siento Board Container */
-.losiento-board {
+/* Lo Siento Board Container - uses transform scaling to maintain aspect ratio */
+.losiento-board-wrapper {
   position: relative;
   width: 800px;
   height: 800px;
-  max-width: 100%;
   margin: 0 auto;
+  overflow: hidden;
+}
+
+.losiento-board {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 800px;
+  height: 800px;
+  transform-origin: top left;
+  /* Scale is set dynamically via JS custom property */
+  transform: scale(var(--ls-scale, 1));
 }
 
 .losiento-board-bg {
@@ -1418,17 +1485,4 @@ button:disabled {
   z-index: 20;
 }
 
-/* Scale the board on smaller screens */
-@media (max-width: 860px) {
-  .losiento-board {
-    width: 100%;
-    height: auto;
-    aspect-ratio: 1 / 1;
-  }
-  
-  .ls-highlight,
-  .ls-pawn {
-    /* Scale proportionally */
-    transform-origin: top left;
-  }
-}
+/* Responsive scaling handled via JS + CSS custom property --ls-scale */

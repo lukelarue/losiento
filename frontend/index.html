@@ -52,7 +52,7 @@
         <section id="screen-game" class="screen hidden">
           <div class="game-layout">
             <div class="game-left">
-              <div class="game-right-top">
+              <div class="game-left-top">
                 <button id="leave-game">Leave game</button>
               </div>
               <div class="game-card-panel">
@@ -61,18 +61,31 @@
               <div class="card">
                 <div id="game-status-pills"></div>
               </div>
-              <div class="interface-toggle-left">
-                <button id="mode-basic" class="mode-btn">Basic Interface</button>
-                <button id="mode-losiento" class="mode-btn mode-btn-active">¡Lo Siento!</button>
+              <div class="settings-section">
+                <h4>Bot Autoplay</h4>
+                <div class="autoplay-toggle">
+                  <button id="autoplay-off" class="autoplay-btn">Off</button>
+                  <button id="autoplay-slow" class="autoplay-btn">Slow</button>
+                  <button id="autoplay-fast" class="autoplay-btn autoplay-btn-active">Fast</button>
+                </div>
+              </div>
+              <div class="settings-section">
+                <h4>Board Style</h4>
+                <div class="interface-toggle-left">
+                  <button id="mode-basic" class="mode-btn">Basic</button>
+                  <button id="mode-losiento" class="mode-btn mode-btn-active">¡Lo Siento!</button>
+                </div>
               </div>
             </div>
             <div class="game-middle">
               <div class="board-panel">
                 <div id="track-grid" class="track-grid hidden"></div>
-                <div id="losiento-board" class="losiento-board">
-                  <img src="assets/board.png" alt="¡Lo Siento! Board" class="losiento-board-bg" />
-                  <div id="losiento-highlights" class="losiento-highlights"></div>
-                  <div id="losiento-pawns" class="losiento-pawns"></div>
+                <div id="losiento-board-wrapper" class="losiento-board-wrapper">
+                  <div id="losiento-board" class="losiento-board">
+                    <img src="assets/board.png" alt="¡Lo Siento! Board" class="losiento-board-bg" />
+                    <div id="losiento-highlights" class="losiento-highlights"></div>
+                    <div id="losiento-pawns" class="losiento-pawns"></div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -84,7 +97,6 @@
                 <div class="game-top-turn">
                   <div id="turn-blurb" class="turn-blurb"></div>
                 </div>
-                <button id="autoplay-bot">Autoplay bot turns</button>
               </div>
               <div class="card">
                 <h3>Card history</h3>
