@@ -132,7 +132,7 @@
   
   // Background music control
   function playNextBgTrack() {
-    if (musicMuted || allSoundMuted || interfaceMode !== 'losiento') {
+    if (musicMuted || interfaceMode !== 'losiento') {
       bgMusicPlayer.pause();
       return;
     }
@@ -161,11 +161,6 @@
   
   function toggleAllSoundMute() {
     allSoundMuted = !allSoundMuted;
-    if (allSoundMuted) {
-      bgMusicPlayer.pause();
-    } else if (bgMusicStarted && !musicMuted && interfaceMode === 'losiento') {
-      bgMusicPlayer.play().catch(() => {});
-    }
     updateSoundControlButtons();
   }
   
@@ -183,7 +178,7 @@
     if (bgMusicStarted) return;
     if (interfaceMode !== 'losiento') return;
     bgMusicStarted = true;
-    if (!musicMuted && !allSoundMuted) {
+    if (!musicMuted) {
       playNextBgTrack();
     }
     // Remove listeners after first interaction
@@ -200,23 +195,31 @@
     const muteBtn = document.getElementById('sound-mute-music');
     const muteAllBtn = document.getElementById('sound-mute-all');
     
+    // Disable all sound buttons when in basic mode (no sound in basic mode)
+    const isBasicMode = interfaceMode === 'basic';
+    
     if (skipBtn) {
-      skipBtn.disabled = musicMuted || allSoundMuted;
-      skipBtn.title = 'Skip Song';
+      skipBtn.disabled = isBasicMode || musicMuted;
+      skipBtn.title = isBasicMode ? 'No sound in Basic mode' : 'Skip Song';
+      skipBtn.classList.toggle('sound-btn-disabled', isBasicMode);
     }
     if (muteBtn) {
       // Always show music note, just change button color
       muteBtn.textContent = '🎵';
-      muteBtn.title = musicMuted ? 'Unmute Music' : 'Silence Music';
-      muteBtn.classList.toggle('sound-btn-active', !musicMuted);
-      muteBtn.classList.toggle('sound-btn-muted', musicMuted);
+      muteBtn.disabled = isBasicMode;
+      muteBtn.title = isBasicMode ? 'No sound in Basic mode' : (musicMuted ? 'Unmute Music' : 'Silence Music');
+      muteBtn.classList.toggle('sound-btn-active', !isBasicMode && !musicMuted);
+      muteBtn.classList.toggle('sound-btn-muted', !isBasicMode && musicMuted);
+      muteBtn.classList.toggle('sound-btn-disabled', isBasicMode);
     }
     if (muteAllBtn) {
       // Show speaker icon, change button color based on mute state
       muteAllBtn.textContent = '🔊';
-      muteAllBtn.title = allSoundMuted ? 'Unmute All Sound' : 'Silence All Sound';
-      muteAllBtn.classList.toggle('sound-btn-active', !allSoundMuted);
-      muteAllBtn.classList.toggle('sound-btn-muted', allSoundMuted);
+      muteAllBtn.disabled = isBasicMode;
+      muteAllBtn.title = isBasicMode ? 'No sound in Basic mode' : (allSoundMuted ? 'Unmute Sound Effects' : 'Mute Sound Effects');
+      muteAllBtn.classList.toggle('sound-btn-active', !isBasicMode && !allSoundMuted);
+      muteAllBtn.classList.toggle('sound-btn-muted', !isBasicMode && allSoundMuted);
+      muteAllBtn.classList.toggle('sound-btn-disabled', isBasicMode);
     }
   }
   
@@ -3213,10 +3216,13 @@
         updateLoSientoBoardScale();
       });
       // Resume background music when switching to Lo Siento mode (if started and not muted)
-      if (bgMusicStarted && !musicMuted && !allSoundMuted) {
+      if (bgMusicStarted && !musicMuted) {
         bgMusicPlayer.play().catch(() => {});
       }
     }
+    
+    // Update sound control buttons to reflect mode change
+    updateSoundControlButtons();
     
     // Re-render the game in the new mode
     if (currentGame && currentGame.phase === 'active') {

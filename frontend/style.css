@@ -1549,3 +1549,11 @@ button:disabled {
   background: #991b1b;
   border-color: #f87171;
 }
+
+.sound-btn-disabled {
+  background: #374151 !important;
+  border-color: #4b5563 !important;
+  color: #6b7280 !important;
+  box-shadow: none !important;
+  opacity: 0.5;
+}
