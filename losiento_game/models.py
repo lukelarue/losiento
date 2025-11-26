@@ -41,6 +41,7 @@ class CardHistoryEntry:
     card: Card
     seat_index: int
     display_name: Optional[str] = None
+    turn_number: Optional[int] = None
 
 
 @dataclass
@@ -111,6 +112,7 @@ def game_state_to_dict(state: GameState) -> Dict[str, Any]:
                     "card": entry.card,
                     "seatIndex": entry.seat_index,
                     "displayName": entry.display_name,
+                    "turnNumber": entry.turn_number,
                 }
                 for entry in card_history_list
             ],

@@ -1342,7 +1342,7 @@ button:disabled {
     transform: scale(1);
   }
   50% { 
-    transform: scale(1.15);
+    transform: scale(1.25);
   }
   100% {
     transform: scale(1);

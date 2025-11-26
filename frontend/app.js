@@ -77,6 +77,11 @@
   // Animation state for Lo Siento mode
   let lsAnimationQueue = [];
   let lsAnimating = false;
+  
+  // Track previous pawn positions for animation detection
+  let lsPreviousPawnPositions = new Map(); // pawnId -> { type, index, seatIndex, x, y }
+  let lsLastRenderedTurnNumber = null;
+  let lsLastRenderedGameId = null;
 
   // Track grid constants and coordinate mapping (shared between basic and Lo Siento modes)
   const TRACK_LEN = 60;
@@ -2462,6 +2467,438 @@
     return colorMap[color] || colorMap.red;
   }
 
+  // Slide tile detection - returns true if track index is part of a slide
+  function lsIsSlideTrackIndex(trackIndex) {
+    // Slides per seat (4-tile and 5-tile slides)
+    // First slide: starts at (seat_offset + 1), length 4
+    // Second slide: starts at (seat_offset + 10), length 5
+    const TRACK_SEGMENT_LEN = 15;
+    for (let seat = 0; seat < 4; seat++) {
+      const offset = ((seat + 2) % 4) * TRACK_SEGMENT_LEN;
+      // First slide (4 tiles)
+      const slide1Start = (offset + 1) % TRACK_LEN;
+      for (let i = 0; i < 4; i++) {
+        if ((slide1Start + i) % TRACK_LEN === trackIndex) return true;
+      }
+      // Second slide (5 tiles)
+      const slide2Start = (offset + 10) % TRACK_LEN;
+      for (let i = 0; i < 5; i++) {
+        if ((slide2Start + i) % TRACK_LEN === trackIndex) return true;
+      }
+    }
+    return false;
+  }
+
+  // Get slide end index if starting a slide
+  function lsGetSlideEnd(trackIndex) {
+    const TRACK_SEGMENT_LEN = 15;
+    for (let seat = 0; seat < 4; seat++) {
+      const offset = ((seat + 2) % 4) * TRACK_SEGMENT_LEN;
+      // First slide (4 tiles) - starts at offset+1
+      const slide1Start = (offset + 1) % TRACK_LEN;
+      if (trackIndex === slide1Start) {
+        return (slide1Start + 3) % TRACK_LEN; // End of 4-tile slide
+      }
+      // Second slide (5 tiles) - starts at offset+10
+      const slide2Start = (offset + 10) % TRACK_LEN;
+      if (trackIndex === slide2Start) {
+        return (slide2Start + 4) % TRACK_LEN; // End of 5-tile slide
+      }
+    }
+    return null;
+  }
+
+  // Get slide info if a track index is a slide END (and not owned by pawnSeatIndex)
+  // Returns { start, end, ownerSeat } or null
+  function lsGetSlideForEnd(trackIndex, pawnSeatIndex) {
+    const TRACK_SEGMENT_LEN = 15;
+    for (let seat = 0; seat < 4; seat++) {
+      // Skip pawn's own slides - can't slide on your own color
+      if (seat === pawnSeatIndex) continue;
+      
+      const offset = ((seat + 2) % 4) * TRACK_SEGMENT_LEN;
+      // First slide (4 tiles)
+      const slide1Start = (offset + 1) % TRACK_LEN;
+      const slide1End = (slide1Start + 3) % TRACK_LEN;
+      if (trackIndex === slide1End) {
+        return { start: slide1Start, end: slide1End, ownerSeat: seat };
+      }
+      // Second slide (5 tiles)
+      const slide2Start = (offset + 10) % TRACK_LEN;
+      const slide2End = (slide2Start + 4) % TRACK_LEN;
+      if (trackIndex === slide2End) {
+        return { start: slide2Start, end: slide2End, ownerSeat: seat };
+      }
+    }
+    return null;
+  }
+
+  // Animate a pawn element with arching motion between positions
+  // Arc curves toward board center for a more natural look
+  async function lsAnimateArch(pawnEl, startX, startY, endX, endY, duration = 260) {
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
+    
+    // Calculate arc direction toward board center (400, 400)
+    const boardCenterX = 400;
+    const boardCenterY = 400;
+    const arcAmount = 18; // How far to arc
+    
+    // Direction from midpoint toward board center
+    const toCenterX = boardCenterX - midX;
+    const toCenterY = boardCenterY - midY;
+    const dist = Math.sqrt(toCenterX * toCenterX + toCenterY * toCenterY);
+    
+    // Normalize and apply arc amount
+    const arcX = dist > 0 ? midX + (toCenterX / dist) * arcAmount : midX;
+    const arcY = dist > 0 ? midY + (toCenterY / dist) * arcAmount - 8 : midY - 20; // Also lift slightly
+    
+    const animation = pawnEl.animate([
+      { transform: `translate(${startX}px, ${startY}px)` },
+      { transform: `translate(${arcX}px, ${arcY}px)` },
+      { transform: `translate(${endX}px, ${endY}px)` }
+    ], {
+      duration: duration,
+      easing: 'ease-in-out',
+      fill: 'forwards'
+    });
+    
+    await animation.finished;
+    pawnEl.style.transform = `translate(${endX}px, ${endY}px)`;
+  }
+
+  // Animate a pawn element with sliding motion
+  async function lsAnimateSlide(pawnEl, startX, startY, endX, endY, duration = 650) {
+    const animation = pawnEl.animate([
+      { transform: `translate(${startX}px, ${startY}px)` },
+      { transform: `translate(${endX}px, ${endY}px)` }
+    ], {
+      duration: duration,
+      easing: 'linear',
+      fill: 'forwards'
+    });
+    
+    await animation.finished;
+    pawnEl.style.transform = `translate(${endX}px, ${endY}px)`;
+  }
+
+  // Animate a pawn with knockout spin (720° rotation back to start)
+  async function lsAnimateKnockout(pawnEl, startX, startY, endX, endY, duration = 600) {
+    pawnEl.style.zIndex = '20';
+    
+    const animation = pawnEl.animate([
+      { transform: `translate(${startX}px, ${startY}px) rotate(0deg)` },
+      { transform: `translate(${endX}px, ${endY}px) rotate(720deg)` }
+    ], {
+      duration: duration,
+      easing: 'ease-in-out',
+      fill: 'forwards'
+    });
+    
+    await animation.finished;
+    pawnEl.style.transform = `translate(${endX}px, ${endY}px)`;
+    pawnEl.style.zIndex = '';
+  }
+
+  // Animate a pawn through multiple tiles with arching motion
+  async function lsAnimateMultiHop(pawnEl, positions, hopDuration = 120) {
+    for (let i = 0; i < positions.length - 1; i++) {
+      const start = positions[i];
+      const end = positions[i + 1];
+      await lsAnimateArch(pawnEl, start.x, start.y, end.x, end.y, hopDuration);
+    }
+  }
+
+  // Build the animation path for a move, detecting slides
+  function lsBuildMovePath(oldPos, newPos, seatIndex, safetyCoordsBySeat, homeCoordBySeat) {
+    const path = [];
+    const pawnOffset = (LS_TILE_SIZE - LS_PAWN_SIZE) / 2;
+    const hatX = LS_PAWN_HAT_OFFSET_X;
+    const hatY = LS_PAWN_HAT_OFFSET_Y;
+    
+    // Helper to add a track position to path
+    const addTrackPos = (trackIdx) => {
+      const pixel = lsTrackIndexToPixel(trackIdx);
+      path.push({
+        x: pixel.x + pawnOffset + hatX,
+        y: pixel.y + pawnOffset + hatY,
+        trackIndex: trackIdx
+      });
+    };
+    
+    // Helper to add a safety position
+    const addSafetyPos = (safetyIdx) => {
+      const pixel = lsSafetyToPixel(seatIndex, safetyIdx, safetyCoordsBySeat);
+      path.push({
+        x: pixel.x + pawnOffset + hatX,
+        y: pixel.y + pawnOffset + hatY,
+        type: 'safety',
+        index: safetyIdx
+      });
+    };
+    
+    // Helper to add home position
+    const addHomePos = () => {
+      const center = LS_HOME_CENTERS[seatIndex];
+      if (center) {
+        path.push({
+          x: center.x - LS_PAWN_SIZE / 2 + hatX,
+          y: center.y - LS_PAWN_SIZE / 2 + hatY,
+          type: 'home'
+        });
+      }
+    };
+    
+    // Track to track movement
+    if (oldPos.type === 'track' && newPos.type === 'track') {
+      const fromIdx = oldPos.index;
+      const toIdx = newPos.index;
+      
+      // Determine direction (forward or backward)
+      // Forward: increasing index (wrapping at 60)
+      // Calculate forward distance
+      let forwardDist = (toIdx - fromIdx + TRACK_LEN) % TRACK_LEN;
+      let backwardDist = (fromIdx - toIdx + TRACK_LEN) % TRACK_LEN;
+      
+      // Check if this is a slide: if forward distance is large but actual movement
+      // would have landed on a slide start
+      let slideStartIdx = null;
+      let slideEndIdx = null;
+      
+      // Try to detect slide: walk forward from old position
+      // If we hit a slide start before reaching destination, and destination is slide end
+      if (forwardDist > 0 && forwardDist <= 12) {
+        // Walking forward
+        let current = fromIdx;
+        addTrackPos(current);
+        
+        while (current !== toIdx) {
+          current = (current + 1) % TRACK_LEN;
+          
+          // Check if this is a slide start
+          const slideEnd = lsGetSlideEnd(current);
+          if (slideEnd !== null && slideEnd === toIdx) {
+            // This is a slide! Mark it
+            slideStartIdx = path.length; // Index in path array
+            addTrackPos(current);
+            path.slideInfo = { slideStartIdx, slideEnd };
+            // Don't add intermediate slide positions, jump to end
+            break;
+          }
+          
+          addTrackPos(current);
+        }
+      } else if (backwardDist > 0 && backwardDist <= 12) {
+        // Walking backward (e.g., card 4 or backward 7)
+        let current = fromIdx;
+        addTrackPos(current);
+        
+        while (current !== toIdx) {
+          current = (current - 1 + TRACK_LEN) % TRACK_LEN;
+          addTrackPos(current);
+        }
+      } else {
+        // Unknown direction, just add start and end
+        addTrackPos(fromIdx);
+        addTrackPos(toIdx);
+      }
+    }
+    // Track to safety - animate through track tiles to safety entry, then safety tiles
+    else if (oldPos.type === 'track' && newPos.type === 'safety') {
+      const fromIdx = oldPos.index;
+      const safetyEntryIdx = lsGetSafetyEntryTrackIndex(seatIndex);
+      
+      // Walk through track tiles from start to safety entry point
+      let current = fromIdx;
+      addTrackPos(current);
+      
+      while (current !== safetyEntryIdx) {
+        current = (current + 1) % TRACK_LEN;
+        addTrackPos(current);
+      }
+      
+      // Walk through safety zone from entry (index 0) to destination
+      for (let i = 0; i <= newPos.index; i++) {
+        addSafetyPos(i);
+      }
+    }
+    // Track to home - animate through track tiles to safety entry, then safety zone, then home
+    else if (oldPos.type === 'track' && newPos.type === 'home') {
+      const fromIdx = oldPos.index;
+      const safetyEntryIdx = lsGetSafetyEntryTrackIndex(seatIndex);
+      
+      // Walk through track tiles from start to safety entry point
+      let current = fromIdx;
+      addTrackPos(current);
+      
+      while (current !== safetyEntryIdx) {
+        current = (current + 1) % TRACK_LEN;
+        addTrackPos(current);
+      }
+      
+      // Walk through entire safety zone (5 tiles) then home
+      for (let i = 0; i < 5; i++) {
+        addSafetyPos(i);
+      }
+      addHomePos();
+    }
+    // Safety to home or further in safety
+    else if (oldPos.type === 'safety') {
+      // Add current safety position
+      addSafetyPos(oldPos.index);
+      
+      if (newPos.type === 'safety') {
+        // Walking through safety
+        for (let i = oldPos.index + 1; i <= newPos.index; i++) {
+          addSafetyPos(i);
+        }
+      } else if (newPos.type === 'home') {
+        // Walk to end of safety then home
+        for (let i = oldPos.index + 1; i < 5; i++) {
+          addSafetyPos(i);
+        }
+        addHomePos();
+      }
+    }
+    // Fallback: just start and end
+    else {
+      path.push({ x: oldPos.x, y: oldPos.y });
+      path.push({ x: newPos.x, y: newPos.y });
+    }
+    
+    return path;
+  }
+
+  // Detect if a path includes a slide - returns the index in path where slide starts, or null
+  // pawnSeatIndex is needed because pawns cannot slide on their own color's slides
+  function lsDetectSlideInPath(path, pawnSeatIndex) {
+    // A slide occurred if:
+    // 1. We have track positions in the path
+    // 2. There's a position that's a slide START (of an opponent's slide)
+    // 3. The final position is the corresponding slide END
+    
+    // Find the last track position in the path
+    let lastTrackIdx = -1;
+    let lastTrackIndex = null;
+    
+    for (let i = path.length - 1; i >= 0; i--) {
+      if (typeof path[i].trackIndex === 'number') {
+        lastTrackIdx = i;
+        lastTrackIndex = path[i].trackIndex;
+        break;
+      }
+    }
+    
+    if (lastTrackIdx < 0 || lastTrackIndex === null) return null;
+    
+    // Check if the final track position is a slide END
+    // If so, find the corresponding slide START in the path
+    const TRACK_SEGMENT_LEN = 15;
+    
+    // All slide positions on the board, with their owning seat
+    const slides = [];
+    for (let seat = 0; seat < 4; seat++) {
+      const offset = ((seat + 2) % 4) * TRACK_SEGMENT_LEN;
+      slides.push({ start: (offset + 1) % TRACK_LEN, end: (offset + 4) % TRACK_LEN, length: 4, ownerSeat: seat });
+      slides.push({ start: (offset + 10) % TRACK_LEN, end: (offset + 14) % TRACK_LEN, length: 5, ownerSeat: seat });
+    }
+    
+    console.log('[LS Slide] Last track position:', lastTrackIndex, 'at path index', lastTrackIdx, 'pawn seat:', pawnSeatIndex);
+    console.log('[LS Slide] Known slide ends:', slides.map(s => `${s.end}(seat${s.ownerSeat})`));
+    
+    for (const slide of slides) {
+      if (lastTrackIndex === slide.end) {
+        // Skip if this is the pawn's own slide - you can't slide on your own color
+        if (slide.ownerSeat === pawnSeatIndex) {
+          console.log('[LS Slide] Destination matches slide end', slide.end, 'but it belongs to pawn seat', pawnSeatIndex, '- no slide');
+          continue;
+        }
+        
+        console.log('[LS Slide] Destination matches slide end', slide.end, '(seat', slide.ownerSeat, ') - looking for start', slide.start);
+        // Check if slide start is in the path
+        for (let i = 0; i < lastTrackIdx; i++) {
+          if (path[i].trackIndex === slide.start) {
+            console.log('[LS Slide] Found slide start at path index', i);
+            return i; // Return index of slide start in path
+          }
+        }
+        console.log('[LS Slide] Slide start', slide.start, 'NOT found in path');
+      }
+    }
+    
+    return null;
+  }
+
+  // Get the track index where a player enters their safety zone
+  function lsGetSafetyEntryTrackIndex(seatIndex) {
+    // Safety entry is at firstSlide[1] for each seat
+    // offset = ((seatIndex + 2) % 4) * 15
+    // slide starts at (offset + 1), entry is slide start + 1
+    // Seat 0 (Red): offset=30, slide=[31,32,33,34], entry=32
+    // Seat 1 (Blue): offset=45, slide=[46,47,48,49], entry=47
+    // Seat 2 (Yellow): offset=0, slide=[1,2,3,4], entry=2
+    // Seat 3 (Green): offset=15, slide=[16,17,18,19], entry=17
+    const entries = [32, 47, 2, 17];
+    return entries[seatIndex] || 0;
+  }
+
+  // Calculate intermediate positions for multi-tile movement on track
+  function lsGetTrackPath(fromIndex, toIndex, direction, seatIndex, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat, destType, destIndex) {
+    const positions = [];
+    const pawnOffset = (LS_TILE_SIZE - LS_PAWN_SIZE) / 2;
+    const hatX = LS_PAWN_HAT_OFFSET_X;
+    const hatY = LS_PAWN_HAT_OFFSET_Y;
+    
+    if (direction === 'forward') {
+      let current = fromIndex;
+      positions.push({
+        x: lsTrackIndexToPixel(current).x + pawnOffset + hatX,
+        y: lsTrackIndexToPixel(current).y + pawnOffset + hatY
+      });
+      
+      while (current !== toIndex) {
+        current = (current + 1) % TRACK_LEN;
+        positions.push({
+          x: lsTrackIndexToPixel(current).x + pawnOffset + hatX,
+          y: lsTrackIndexToPixel(current).y + pawnOffset + hatY
+        });
+      }
+    } else if (direction === 'backward') {
+      let current = fromIndex;
+      positions.push({
+        x: lsTrackIndexToPixel(current).x + pawnOffset + hatX,
+        y: lsTrackIndexToPixel(current).y + pawnOffset + hatY
+      });
+      
+      while (current !== toIndex) {
+        current = (current - 1 + TRACK_LEN) % TRACK_LEN;
+        positions.push({
+          x: lsTrackIndexToPixel(current).x + pawnOffset + hatX,
+          y: lsTrackIndexToPixel(current).y + pawnOffset + hatY
+        });
+      }
+    }
+    
+    // If destination is safety or home, add final position
+    if (destType === 'safety' && typeof destIndex === 'number') {
+      const pixel = lsSafetyToPixel(seatIndex, destIndex, safetyCoordsBySeat);
+      positions.push({
+        x: pixel.x + pawnOffset + hatX,
+        y: pixel.y + pawnOffset + hatY
+      });
+    } else if (destType === 'home') {
+      const center = LS_HOME_CENTERS[seatIndex];
+      if (center) {
+        positions.push({
+          x: center.x - LS_PAWN_SIZE / 2 + hatX,
+          y: center.y - LS_PAWN_SIZE / 2 + hatY
+        });
+      }
+    }
+    
+    return positions;
+  }
+
   // Toggle interface mode
   function setInterfaceMode(mode) {
     interfaceMode = mode;
@@ -2488,13 +2925,298 @@
   function renderLoSientoBoard(gameState, colors, viewerSeatIndex, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat) {
     if (!losientoPawnsEl || !losientoHighlightsEl) return;
     
-    losientoPawnsEl.innerHTML = '';
-    losientoHighlightsEl.innerHTML = '';
-    
     if (!gameState || !gameState.board) return;
     
     const pawns = gameState.board.pawns || [];
     const seats = currentGame.seats || [];
+    const isActive = gameState.result === 'active';
+    const gameId = currentGame.gameId;
+    const turnNumber = gameState.turnNumber;
+    
+    // Detect if this is a turn change (a move was played)
+    const isTurnChange = gameId === lsLastRenderedGameId && 
+                         lsLastRenderedTurnNumber !== null && 
+                         turnNumber !== lsLastRenderedTurnNumber;
+    
+    // Debug turn tracking
+    console.log('[LS Animation] Turn check:', { gameId, turnNumber, lastTurn: lsLastRenderedTurnNumber, isTurnChange, prevPosCount: lsPreviousPawnPositions.size });
+    
+    // Build current pawn positions map
+    const currentPawnPositions = new Map();
+    pawns.forEach(pawn => {
+      if (!pawn.position) return;
+      const pos = lsGetPawnCenter(pawn.position, pawn.seatIndex, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat);
+      currentPawnPositions.set(pawn.pawnId, {
+        type: pawn.position.type,
+        index: pawn.position.index,
+        seatIndex: pawn.seatIndex,
+        x: pos.x,
+        y: pos.y
+      });
+    });
+    
+    // Find pawns that moved
+    const movedPawns = [];
+    const knockedOutPawns = [];
+    
+    if (isTurnChange && lsPreviousPawnPositions.size > 0) {
+      currentPawnPositions.forEach((newPos, pawnId) => {
+        const oldPos = lsPreviousPawnPositions.get(pawnId);
+        if (oldPos && (oldPos.x !== newPos.x || oldPos.y !== newPos.y)) {
+          // Check if pawn was knocked out (moved to start from track/safety)
+          const wasOnTrackOrSafety = oldPos.type === 'track' || oldPos.type === 'safety';
+          const isNowAtStart = newPos.type === 'start';
+          
+          if (wasOnTrackOrSafety && isNowAtStart) {
+            knockedOutPawns.push({ pawnId, oldPos, newPos });
+          } else {
+            movedPawns.push({ pawnId, oldPos, newPos });
+          }
+        }
+      });
+    }
+    
+    // If there are animations to play, handle them
+    const hasAnimations = movedPawns.length > 0 || knockedOutPawns.length > 0;
+    
+    // If animation is in progress, don't clear or re-render - let it finish
+    if (lsAnimating) {
+      console.log('[LS Animation] Skipping - animation in progress');
+      return;
+    }
+    
+    if (hasAnimations) {
+      console.log('[LS Animation] Starting animations for', movedPawns.length, 'moved,', knockedOutPawns.length, 'knocked out');
+    }
+    
+    // Clear the pawn layer
+    losientoPawnsEl.innerHTML = '';
+    losientoHighlightsEl.innerHTML = '';
+    
+    // If we have animations, render pawns at their OLD positions first, then animate
+    if (hasAnimations) {
+      lsAnimating = true;
+      
+      // Render all non-moving pawns at their current positions
+      lsRenderStaticPawns(gameState, colors, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat, 
+                          new Set([...movedPawns.map(p => p.pawnId), ...knockedOutPawns.map(p => p.pawnId)]));
+      
+      // Create and animate moving pawns
+      (async () => {
+        const animationPromises = [];
+        
+        // Animate regular moves
+        for (const { pawnId, oldPos, newPos } of movedPawns) {
+          const pawn = pawns.find(p => p.pawnId === pawnId);
+          if (!pawn) continue;
+          
+          const color = colors[pawn.seatIndex] || 'red';
+          const pawnEl = lsCreatePawnElement(pawnId, color, oldPos.x, oldPos.y);
+          losientoPawnsEl.appendChild(pawnEl);
+          
+          // Build animation sequence
+          const animateMove = async () => {
+            // Track-to-track or track-to-safety/home: animate through each tile
+            if (oldPos.type === 'track' && (newPos.type === 'track' || newPos.type === 'safety' || newPos.type === 'home')) {
+              // Calculate path through tiles
+              const path = lsBuildMovePath(oldPos, newPos, pawn.seatIndex, safetyCoordsBySeat, homeCoordBySeat);
+              console.log('[LS Animation] Path for', oldPos.type, '->', newPos.type, ':', path.length, 'steps', path);
+              
+              if (path.length > 1) {
+                // Check for slide: if destination is slide end and we passed through slide start
+                // Note: pawns cannot slide on their own color's slides
+                const slideStart = lsDetectSlideInPath(path, pawn.seatIndex);
+                console.log('[LS Animation] Slide detection:', slideStart, 'path trackIndices:', path.map(p => p.trackIndex).filter(x => x !== undefined));
+                
+                if (slideStart !== null) {
+                  console.log('[LS Animation] Slide detected! Start at path index', slideStart);
+                  // Hop to slide start, then slide
+                  const preSlide = path.slice(0, slideStart + 1);
+                  if (preSlide.length > 1) {
+                    await lsAnimateMultiHop(pawnEl, preSlide, 130);
+                  }
+                  // Slide from start to end
+                  const slideStartPos = path[slideStart];
+                  const slideEndPos = path[path.length - 1];
+                  await lsAnimateSlide(pawnEl, slideStartPos.x, slideStartPos.y, slideEndPos.x, slideEndPos.y, 400);
+                } else {
+                  // Normal multi-hop animation through each tile
+                  await lsAnimateMultiHop(pawnEl, path, 130);
+                }
+              } else {
+                // Single hop
+                await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, newPos.x, newPos.y, 195);
+              }
+            } 
+            // Start to track: hop out, then slide if landing on opponent's slide
+            else if (oldPos.type === 'start' && newPos.type === 'track') {
+              // Check if destination is a slide end (Lo Siento landing on slide start triggers slide)
+              const slideInfo = lsGetSlideForEnd(newPos.index, pawn.seatIndex);
+              if (slideInfo) {
+                // Pawn landed on a slide start and slid to the end
+                // Animate: hop to slide start, then slide to end
+                const slideStartPixel = lsTrackIndexToPixel(slideInfo.start);
+                const pawnOffset = (LS_TILE_SIZE - LS_PAWN_SIZE) / 2;
+                const hatX = LS_PAWN_HAT_OFFSET_X;
+                const hatY = LS_PAWN_HAT_OFFSET_Y;
+                const slideStartX = slideStartPixel.x + pawnOffset + hatX;
+                const slideStartY = slideStartPixel.y + pawnOffset + hatY;
+                
+                // First hop to slide start
+                await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, slideStartX, slideStartY, 260);
+                // Then slide to end
+                await lsAnimateSlide(pawnEl, slideStartX, slideStartY, newPos.x, newPos.y, 400);
+              } else {
+                // Normal single hop
+                await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, newPos.x, newPos.y, 260);
+              }
+            }
+            // Safety movement: hop through each safety tile
+            else if (oldPos.type === 'safety' && (newPos.type === 'safety' || newPos.type === 'home')) {
+              const path = lsBuildMovePath(oldPos, newPos, pawn.seatIndex, safetyCoordsBySeat, homeCoordBySeat);
+              if (path.length > 1) {
+                await lsAnimateMultiHop(pawnEl, path, 130);
+              } else {
+                await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, newPos.x, newPos.y, 195);
+              }
+            }
+            // Any other move: single hop
+            else {
+              await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, newPos.x, newPos.y, 260);
+            }
+          };
+          
+          animationPromises.push(animateMove());
+        }
+        
+        // Animate knockouts (simultaneous with regular moves for 7-split or Sorry!)
+        for (const { pawnId, oldPos, newPos } of knockedOutPawns) {
+          const pawn = pawns.find(p => p.pawnId === pawnId);
+          if (!pawn) continue;
+          
+          const color = colors[pawn.seatIndex] || 'red';
+          const pawnEl = lsCreatePawnElement(pawnId, color, oldPos.x, oldPos.y);
+          losientoPawnsEl.appendChild(pawnEl);
+          
+          // Slower knockout spin (1.5 seconds)
+          animationPromises.push(lsAnimateKnockout(pawnEl, oldPos.x, oldPos.y, newPos.x, newPos.y, 1500));
+        }
+        
+        await Promise.all(animationPromises);
+        
+        // Animation complete - re-render at final positions
+        lsAnimating = false;
+        lsPreviousPawnPositions = currentPawnPositions;
+        lsLastRenderedGameId = gameId;
+        lsLastRenderedTurnNumber = turnNumber;
+        
+        // Re-render to show final state with proper interactivity
+        losientoPawnsEl.innerHTML = '';
+        losientoHighlightsEl.innerHTML = '';
+        lsRenderAllPawns(gameState, colors, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat);
+        
+        // Render highlights
+        if (isActive && selectedPawnId) {
+          renderLoSientoDestHighlights(gameState, colors, safetyCoordsBySeat, homeCoordBySeat);
+        }
+      })();
+      
+      return;
+    }
+    
+    // No animations - render normally
+    lsRenderAllPawns(gameState, colors, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat);
+    
+    // Update tracking state
+    lsPreviousPawnPositions = currentPawnPositions;
+    lsLastRenderedGameId = gameId;
+    lsLastRenderedTurnNumber = turnNumber;
+    
+    // Render destination highlights for selected pawn (all cards)
+    if (isActive && selectedPawnId) {
+      renderLoSientoDestHighlights(gameState, colors, safetyCoordsBySeat, homeCoordBySeat);
+    }
+  }
+
+  // Create a pawn element for animation
+  function lsCreatePawnElement(pawnId, color, x, y) {
+    const pawnEl = document.createElement('div');
+    pawnEl.className = 'ls-pawn';
+    pawnEl.dataset.pawnId = pawnId;
+    pawnEl.style.transform = `translate(${x}px, ${y}px)`;
+    
+    const img = document.createElement('img');
+    img.src = lsGetPawnImage(color);
+    img.alt = `${color} pawn`;
+    img.draggable = false;
+    pawnEl.appendChild(img);
+    
+    return pawnEl;
+  }
+
+  // Render pawns that are NOT animating
+  function lsRenderStaticPawns(gameState, colors, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat, excludePawnIds) {
+    const pawns = gameState.board.pawns || [];
+    
+    // Group pawns by position for stacking
+    const pawnsByPosition = new Map();
+    
+    pawns.forEach(pawn => {
+      if (excludePawnIds.has(pawn.pawnId)) return;
+      const pos = pawn.position;
+      if (!pos) return;
+      
+      let key;
+      if (pos.type === 'start') {
+        key = `start-${pawn.seatIndex}`;
+      } else if (pos.type === 'home') {
+        key = `home-${pawn.seatIndex}`;
+      } else if (pos.type === 'track') {
+        key = `track-${pos.index}`;
+      } else if (pos.type === 'safety') {
+        key = `safety-${pawn.seatIndex}-${pos.index}`;
+      } else {
+        return;
+      }
+      
+      if (!pawnsByPosition.has(key)) {
+        pawnsByPosition.set(key, []);
+      }
+      pawnsByPosition.get(key).push(pawn);
+    });
+    
+    // Render static pawns
+    pawnsByPosition.forEach((pawnsAtPos, key) => {
+      if (pawnsAtPos.length === 0) return;
+      
+      const firstPawn = pawnsAtPos[0];
+      const seatIndex = firstPawn.seatIndex;
+      const color = colors[seatIndex] || 'red';
+      const pos = firstPawn.position;
+      
+      const baseCenter = lsGetPawnCenter(pos, seatIndex, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat);
+      const isStartOrHome = pos.type === 'start' || pos.type === 'home';
+      
+      if (isStartOrHome && pawnsAtPos.length > 1) {
+        const offsets = lsGetFormationOffsets(pawnsAtPos.length, seatIndex);
+        const pawnElements = pawnsAtPos.map((pawn, idx) => {
+          const offset = offsets[idx] || { x: 0, y: 0 };
+          const finalY = baseCenter.y + offset.y;
+          const pawnEl = lsCreatePawnElement(pawn.pawnId, color, baseCenter.x + offset.x, finalY);
+          return { el: pawnEl, y: finalY };
+        });
+        pawnElements.sort((a, b) => a.y - b.y);
+        pawnElements.forEach(({ el }) => losientoPawnsEl.appendChild(el));
+      } else {
+        const pawnEl = lsCreatePawnElement(firstPawn.pawnId, color, baseCenter.x, baseCenter.y);
+        losientoPawnsEl.appendChild(pawnEl);
+      }
+    });
+  }
+
+  // Render all pawns with full interactivity
+  function lsRenderAllPawns(gameState, colors, safetyCoordsBySeat, homeCoordBySeat, startHomeCoordBySeat) {
+    const pawns = gameState.board.pawns || [];
     const isActive = gameState.result === 'active';
     
     // Group pawns by position for stacking
@@ -2657,11 +3379,6 @@
       
       losientoPawnsEl.appendChild(pawnEl);
     });
-    
-    // Render destination highlights for selected pawn (all cards)
-    if (isActive && selectedPawnId) {
-      renderLoSientoDestHighlights(gameState, colors, safetyCoordsBySeat, homeCoordBySeat);
-    }
   }
 
   // Handle pawn click in Lo Siento mode

@@ -887,6 +887,7 @@ class InMemoryPersistence:
                 card=card,
                 seat_index=seat_index,
                 display_name=display_name,
+                turn_number=state.turn_number,
             ))
             # Keep only last 20 entries
             if len(state.card_history) > 20:
@@ -948,6 +949,7 @@ class InMemoryPersistence:
             card=card,
             seat_index=current,
             display_name=display_name or "Bot",
+            turn_number=state.turn_number,
         ))
         # Keep only last 20 entries
         if len(state.card_history) > 20:
@@ -1094,6 +1096,7 @@ class FirestorePersistence:
                 card=ch.get("card", ""),
                 seat_index=int(ch.get("seatIndex", 0)),
                 display_name=ch.get("displayName"),
+                turn_number=ch.get("turnNumber"),
             ))
 
         return GameState(
@@ -1830,6 +1833,7 @@ class FirestorePersistence:
                 card=card,
                 seat_index=seat_index,
                 display_name=display_name,
+                turn_number=state.turn_number,
             ))
             # Keep only last 20 entries
             if len(state.card_history) > 20:
@@ -1933,6 +1937,7 @@ class FirestorePersistence:
                 card=card,
                 seat_index=current,
                 display_name=display_name or "Bot",
+                turn_number=state.turn_number,
             ))
             # Keep only last 20 entries
             if len(state.card_history) > 20:
