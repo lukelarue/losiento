@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Sequence
 import random
 import copy
 
@@ -155,9 +155,9 @@ def _apply_slides_and_safety(
     return PawnPosition(kind="track", index=track_index), slide_indices
 
 
-def _bump_pawns_on_indices(state: GameState, indices: List[int], moving_pawn: Pawn) -> None:
+def _bump_pawns_on_indices(state: GameState, indices: List[int], exclude_pawns: Sequence[Pawn]) -> None:
     for p in state.pawns:
-        if p is moving_pawn:
+        if any(p is x for x in exclude_pawns):
             continue
         pos = p.position
         if pos.kind == "track" and pos.index in indices:
@@ -221,7 +221,7 @@ def _apply_single_forward(state: GameState, pawn: Pawn, steps: int) -> bool:
             return False
 
     if slide_indices:
-        _bump_pawns_on_indices(state, slide_indices, pawn)
+        _bump_pawns_on_indices(state, slide_indices, (pawn,))
 
     pawn.position = final_pos
     return True
@@ -261,17 +261,18 @@ def _apply_single_backward(state: GameState, pawn: Pawn, steps: int) -> bool:
             return False
 
     if slide_indices:
-        _bump_pawns_on_indices(state, slide_indices, pawn)
+        _bump_pawns_on_indices(state, slide_indices, (pawn,))
 
     pawn.position = final_pos
     return True
 
 
 def build_deck() -> List[Card]:
+    """Build a standard Sorry! deck: 5 ones and 4 of each other card type."""
     deck: List[Card] = []
     deck.extend(["1"] * 5)
     for card in ["Sorry!", "2", "3", "4", "5", "7", "8", "10", "11", "12"]:
-        deck.extend([card] * 4)
+        deck.extend([card] * 4)  # type: ignore[list-item]
     return deck
 
 
@@ -469,7 +470,7 @@ def get_legal_moves(state: GameState, seat_index: int, card: Card) -> List[Move]
                 # Bump the target pawn (and any pawns on slide).
                 tmp_target.position = PawnPosition(kind="start", index=None)
                 if slide_indices:
-                    _bump_pawns_on_indices(tmp_state, slide_indices, tmp_start)
+                    _bump_pawns_on_indices(tmp_state, slide_indices, (tmp_start,))
                 tmp_start.position = final_pos
                 moves.append(
                     Move(
@@ -522,7 +523,7 @@ def apply_move(state: GameState, move: Move) -> GameState:
         # Bump the target pawn (and any pawns on slide indices)
         target.position = PawnPosition(kind="start", index=None)
         if slide_indices:
-            _bump_pawns_on_indices(new_state, slide_indices, pawn)
+            _bump_pawns_on_indices(new_state, slide_indices, (pawn,))
         pawn.position = final_pos
         return new_state
 
@@ -533,7 +534,19 @@ def apply_move(state: GameState, move: Move) -> GameState:
             raise ValueError("invalid_move_target_not_found")
         if pawn.position.kind != "track" or target.position.kind != "track":
             raise ValueError("invalid_move_11_switch_requires_track")
-        pawn.position, target.position = target.position, pawn.position
+        # Store old positions before swap
+        pawn_old_idx = pawn.position.index or 0
+        target_old_idx = target.position.index or 0
+        # Apply slide rules for both pawns landing on each other's positions
+        pawn_final, pawn_slide_indices = _apply_slides_and_safety(new_state, pawn, target_old_idx, forward=True)
+        target_final, target_slide_indices = _apply_slides_and_safety(new_state, target, pawn_old_idx, forward=True)
+        # Bump any pawns on slide paths (excluding the two swapping pawns)
+        if pawn_slide_indices:
+            _bump_pawns_on_indices(new_state, pawn_slide_indices, (pawn, target))
+        if target_slide_indices:
+            _bump_pawns_on_indices(new_state, target_slide_indices, (pawn, target))
+        pawn.position = pawn_final
+        target.position = target_final
         return new_state
 
     if move.card == "7" and move.secondary_pawn_id is not None:

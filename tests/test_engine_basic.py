@@ -327,6 +327,73 @@ class EngineBasicTests(unittest.TestCase):
         self.assertEqual(mover_new.position.index, 35, "mover should take target's original index")
         self.assertEqual(target_new.position.index, 20, "target should take mover's original index")
 
+    def test_card11_switch_onto_slide_triggers_slide(self) -> None:
+        """An 11-switch that lands on an opponent's slide start should slide to the end."""
+        state, _, _ = self._make_basic_state()
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawns1 = [p for p in state.pawns if p.seat_index == 1]
+
+        mover = pawns0[0]
+        target = pawns1[0]
+
+        # Place target on seat 1's slide start (opponent color for seat 0's mover)
+        slide_indices = first_slide_indices(1)
+        slide_start = slide_indices[0]
+        slide_end = slide_indices[-1]
+
+        # Mover is on a neutral position, target is on seat 1's slide start
+        mover.position = PawnPosition(kind="track", index=20)
+        target.position = PawnPosition(kind="track", index=slide_start)
+
+        # When seat 0 switches with the target, seat 0's mover lands on seat 1's slide start
+        # and should slide to the end (since it's an opponent's slide)
+        moves = get_legal_moves(state, seat_index=0, card="11")
+        switch_moves = [m for m in moves if m.card == "11" and m.target_pawn_id == target.pawn_id]
+        self.assertTrue(switch_moves, "expected an 11-switch move targeting opponent on slide start")
+
+        new_state = apply_move(state, switch_moves[0])
+        mover_new = next(p for p in new_state.pawns if p.pawn_id == mover.pawn_id)
+        target_new = next(p for p in new_state.pawns if p.pawn_id == target.pawn_id)
+
+        # Mover should have slid to the end of seat 1's slide
+        self.assertEqual(mover_new.position.kind, "track")
+        self.assertEqual(mover_new.position.index, slide_end, "mover should slide to end of opponent's slide")
+        # Target goes to mover's old position (which is not a slide for seat 1)
+        self.assertEqual(target_new.position.kind, "track")
+        self.assertEqual(target_new.position.index, 20, "target should take mover's original index")
+
+    def test_card11_switch_onto_own_slide_does_not_slide(self) -> None:
+        """An 11-switch landing on your own slide start should NOT slide (per Sorry! rules)."""
+        state, _, _ = self._make_basic_state()
+
+        pawns0 = [p for p in state.pawns if p.seat_index == 0]
+        pawns1 = [p for p in state.pawns if p.seat_index == 1]
+
+        mover = pawns0[0]
+        target = pawns1[0]
+
+        # Place target on seat 0's slide start (mover's own color)
+        slide_indices = first_slide_indices(0)
+        slide_start = slide_indices[0]
+
+        mover.position = PawnPosition(kind="track", index=20)
+        target.position = PawnPosition(kind="track", index=slide_start)
+
+        moves = get_legal_moves(state, seat_index=0, card="11")
+        switch_moves = [m for m in moves if m.card == "11" and m.target_pawn_id == target.pawn_id]
+        self.assertTrue(switch_moves, "expected an 11-switch move")
+
+        new_state = apply_move(state, switch_moves[0])
+        mover_new = next(p for p in new_state.pawns if p.pawn_id == mover.pawn_id)
+        target_new = next(p for p in new_state.pawns if p.pawn_id == target.pawn_id)
+
+        # Mover should NOT slide (it's their own color slide)
+        self.assertEqual(mover_new.position.kind, "track")
+        self.assertEqual(mover_new.position.index, slide_start, "mover should stay on own slide start, not slide")
+        self.assertEqual(target_new.position.kind, "track")
+        self.assertEqual(target_new.position.index, 20)
+
     def test_card7_cannot_leave_start(self) -> None:
         state, _, _ = self._make_basic_state()
 

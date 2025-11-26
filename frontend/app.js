@@ -106,7 +106,7 @@
   let bgMusicShuffled = shuffleArray(bgMusicTracks);
   let bgMusicIndex = 0;
   const bgMusicPlayer = new Audio();
-  bgMusicPlayer.volume = 0.3;
+  bgMusicPlayer.volume = 0.24;
   
   // Audio control state
   let musicMuted = false;
@@ -205,16 +205,18 @@
       skipBtn.title = 'Skip Song';
     }
     if (muteBtn) {
-      // Show music note when music is playing, mute icon when silenced
-      muteBtn.textContent = musicMuted ? '🔇' : '🎵';
+      // Always show music note, just change button color
+      muteBtn.textContent = '🎵';
       muteBtn.title = musicMuted ? 'Unmute Music' : 'Silence Music';
       muteBtn.classList.toggle('sound-btn-active', !musicMuted);
+      muteBtn.classList.toggle('sound-btn-muted', musicMuted);
     }
     if (muteAllBtn) {
-      // Show speaker when sound is on, mute icon when silenced
-      muteAllBtn.textContent = allSoundMuted ? '🔇' : '🔊';
+      // Show speaker icon, change button color based on mute state
+      muteAllBtn.textContent = '🔊';
       muteAllBtn.title = allSoundMuted ? 'Unmute All Sound' : 'Silence All Sound';
       muteAllBtn.classList.toggle('sound-btn-active', !allSoundMuted);
+      muteAllBtn.classList.toggle('sound-btn-muted', allSoundMuted);
     }
   }
   
@@ -3320,12 +3322,12 @@
     }
     
     // Detect swap: two pawns from different players exchanged positions (card 11 swap)
-    // For swaps, we use direct fly animation instead of step-by-step
+    // Swaps can trigger slides if landing on an opponent's slide start
+    // swapSlideInfo maps pawnId -> { slideStart: trackIndex, slideEnd: trackIndex } or null
     const swapPawnIds = new Set();
+    const swapSlideInfo = new Map();
     if (movedPawns.length === 2) {
       const [p1, p2] = movedPawns;
-      // Check if they swapped: p1's old pos == p2's new pos AND p2's old pos == p1's new pos
-      // Compare by track index for track positions
       const p1OldTrack = p1.oldPos.type === 'track' ? p1.oldPos.index : null;
       const p2OldTrack = p2.oldPos.type === 'track' ? p2.oldPos.index : null;
       const p1NewTrack = p1.newPos.type === 'track' ? p1.newPos.index : null;
@@ -3333,11 +3335,44 @@
       
       if (p1OldTrack !== null && p2OldTrack !== null && 
           p1NewTrack !== null && p2NewTrack !== null &&
-          p1OldTrack === p2NewTrack && p2OldTrack === p1NewTrack &&
           p1.oldPos.seatIndex !== p2.oldPos.seatIndex) {
-        // This is a swap! Mark both pawns
-        swapPawnIds.add(p1.pawnId);
-        swapPawnIds.add(p2.pawnId);
+        
+        // Helper: check if pawn landed on opponent slide and slid
+        // Returns { slideStart, slideEnd } or null
+        const checkSlide = (landingIndex, finalIndex, pawnSeatIndex) => {
+          const slideOwner = lsGetSlideOwner(landingIndex);
+          if (slideOwner !== null && slideOwner !== pawnSeatIndex) {
+            const slideEnd = lsGetSlideEnd(landingIndex);
+            if (slideEnd === finalIndex) {
+              return { slideStart: landingIndex, slideEnd: finalIndex };
+            }
+          }
+          return null;
+        };
+        
+        // P1 goes to where P2 was, P2 goes to where P1 was
+        // Check if this is a swap (possibly with slides)
+        // P1's landing spot is P2's old position, P2's landing spot is P1's old position
+        const p1LandingSpot = p2OldTrack; // Where P1 initially lands (before potential slide)
+        const p2LandingSpot = p1OldTrack; // Where P2 initially lands (before potential slide)
+        
+        // Check if P1 slid after landing
+        const p1Slide = checkSlide(p1LandingSpot, p1NewTrack, p1.oldPos.seatIndex);
+        // Check if P2 slid after landing  
+        const p2Slide = checkSlide(p2LandingSpot, p2NewTrack, p2.oldPos.seatIndex);
+        
+        // Verify this is a valid swap:
+        // - P1's final position should be either P2's old pos (no slide) or slide end from P2's old pos
+        // - P2's final position should be either P1's old pos (no slide) or slide end from P1's old pos
+        const p1Valid = (p1NewTrack === p1LandingSpot) || (p1Slide !== null);
+        const p2Valid = (p2NewTrack === p2LandingSpot) || (p2Slide !== null);
+        
+        if (p1Valid && p2Valid) {
+          swapPawnIds.add(p1.pawnId);
+          swapPawnIds.add(p2.pawnId);
+          swapSlideInfo.set(p1.pawnId, p1Slide); // null if no slide
+          swapSlideInfo.set(p2.pawnId, p2Slide); // null if no slide
+        }
       }
     }
     
@@ -3380,9 +3415,26 @@
           
           // Build animation sequence
           const animateMove = async () => {
-            // For swap moves (card 11), use direct fly animation - no stepping
+            // For swap moves (card 11), check if we need to animate a slide
             if (swapPawnIds.has(pawnId)) {
-              await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, newPos.x, newPos.y, 400);
+              const slideInfo = swapSlideInfo.get(pawnId);
+              if (slideInfo) {
+                // Swap with slide: arch to slide start, then slide to end
+                const slideStartPixel = lsTrackIndexToPixel(slideInfo.slideStart);
+                const pawnOffset = (LS_TILE_SIZE - LS_PAWN_SIZE) / 2;
+                const hatX = LS_PAWN_HAT_OFFSET_X;
+                const hatY = LS_PAWN_HAT_OFFSET_Y;
+                const slideStartX = slideStartPixel.x + pawnOffset + hatX;
+                const slideStartY = slideStartPixel.y + pawnOffset + hatY;
+                
+                // Arch to slide start (where we initially landed)
+                await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, slideStartX, slideStartY, 300);
+                // Slide to final position
+                await lsAnimateSlide(pawnEl, slideStartX, slideStartY, newPos.x, newPos.y, 550);
+              } else {
+                // Simple swap without slide: direct fly animation
+                await lsAnimateArch(pawnEl, oldPos.x, oldPos.y, newPos.x, newPos.y, 400);
+              }
               return;
             }
             
