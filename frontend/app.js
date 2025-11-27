@@ -2476,11 +2476,55 @@
         }
       }
 
-      if (Array.isArray(upcomingMoves) && upcomingMoves.length === 1) {
-        const onlyMove = upcomingMoves[0];
-        if (onlyMove && typeof onlyMove.index === "number") {
-          selectedMoveIndex = onlyMove.index;
-          selectedPawnId = onlyMove.pawnId || null;
+      // Enhanced autoselection logic
+      if (Array.isArray(upcomingMoves) && upcomingMoves.length >= 1) {
+        let autoMove = null;
+
+        // Case 1: Exactly one move - always autoselect
+        if (upcomingMoves.length === 1) {
+          autoMove = upcomingMoves[0];
+        }
+
+        // Case 2: Card 1, 2, or Sorry! with only moves from start (home pawns)
+        // When multiple pawns are at start and the only option is to move one out
+        if (!autoMove && (upcomingCard === "1" || upcomingCard === "2" || upcomingCard === "Sorry!")) {
+          const board = currentGame?.state?.board;
+          const pawnsList = board && Array.isArray(board.pawns) ? board.pawns : [];
+          
+          // Check if all moves are from pawns currently at start
+          const allFromStart = upcomingMoves.every((m) => {
+            const pawn = pawnsList.find((p) => p.pawnId === m.pawnId);
+            return pawn && pawn.position && pawn.position.type === "start";
+          });
+          
+          if (allFromStart && upcomingMoves.length > 0) {
+            // All moves are equivalent (different pawns at start doing the same thing)
+            // Autoselect the first one
+            autoMove = upcomingMoves[0];
+          }
+        }
+
+        // Case 3: Card 10 or 11 with only one pawn having the forward move option
+        // When there's only 1 pawn with a valid forward 10 or forward 11 move
+        if (!autoMove && (upcomingCard === "10" || upcomingCard === "11")) {
+          const forwardSteps = upcomingCard === "10" ? 10 : 11;
+          const forwardMoves = upcomingMoves.filter(
+            (m) => m.direction === "forward" && m.steps === forwardSteps
+          );
+          
+          // Get unique pawnIds that can do the forward move
+          const forwardPawnIds = new Set(forwardMoves.map((m) => m.pawnId));
+          
+          // If exactly one pawn can do the forward move, autoselect it
+          if (forwardPawnIds.size === 1 && forwardMoves.length === 1) {
+            autoMove = forwardMoves[0];
+          }
+        }
+
+        // Apply autoselection if found
+        if (autoMove && typeof autoMove.index === "number") {
+          selectedMoveIndex = autoMove.index;
+          selectedPawnId = autoMove.pawnId || null;
         }
       }
 
