@@ -548,6 +548,17 @@ button:disabled {
   margin-top: 0;
 }
 
+/* Green "Play again" button when game is over */
+.btn-play-again {
+  background: #059669 !important;
+  border-color: #10b981 !important;
+  color: #ffffff !important;
+}
+
+.btn-play-again:hover {
+  background: #047857 !important;
+}
+
 /* Settings sections for autoplay & board style */
 .settings-section {
   margin-top: 0.5rem;

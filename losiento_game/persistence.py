@@ -233,6 +233,10 @@ class InMemoryPersistence:
     def __init__(self) -> None:
         self.games: Dict[str, Dict[str, Any]] = {}
         self.user_active_game: Dict[str, str] = {}
+        # Stats tracking: user_id -> {played, wins, losses, best_turns}
+        self.user_stats: Dict[str, Dict[str, Any]] = {}
+        # Leaderboard: list of {user_id, wins, losses, best_turns}
+        self.leaderboard_entries: Dict[str, Dict[str, Any]] = {}
 
     def _ensure_user_free(self, user_id: str) -> None:
         if user_id in self.user_active_game:
@@ -347,14 +351,19 @@ class InMemoryPersistence:
                         del self.user_active_game[s.player_id]
                 return game
             else:
-                # During active game, host seat becomes bot and we pick a new host
+                # During active/finished game, host seat becomes bot and we pick a new host
+                display_name = None
                 for s in seats:
                     if s.player_id == user_id:
+                        display_name = s.display_name
                         s.player_id = None
                         s.display_name = None
                         s.is_bot = True
                         s.status = "bot"
                         break
+                # Record loss only if leaving an active game (not finished)
+                if game["phase"] == "active":
+                    self._record_loss_for_leaving(user_id, display_name)
                 if user_id in self.user_active_game:
                     del self.user_active_game[user_id]
                 
@@ -378,12 +387,17 @@ class InMemoryPersistence:
                 return game
         
         # Non-host leaving: convert their seat to bot
+        display_name = None
         for s in seats:
             if s.player_id == user_id:
+                display_name = s.display_name
                 s.player_id = None
                 s.display_name = None
                 s.is_bot = True
                 s.status = "bot"
+        # Record loss if leaving an active game
+        if game["phase"] == "active":
+            self._record_loss_for_leaving(user_id, display_name)
         if user_id in self.user_active_game:
             del self.user_active_game[user_id]
         game["updated_at"] = _now()
@@ -397,14 +411,19 @@ class InMemoryPersistence:
         if not (0 <= seat_index < len(seats)):
             raise ValueError("invalid_seat")
         seat = seats[seat_index]
-        if seat.player_id and seat.player_id in self.user_active_game:
-            del self.user_active_game[seat.player_id]
+        kicked_user_id = seat.player_id
+        kicked_display_name = seat.display_name
+        if kicked_user_id and kicked_user_id in self.user_active_game:
+            del self.user_active_game[kicked_user_id]
         if seat_index == 0:
             raise ValueError("cannot_kick_host")
         seat.player_id = None
         seat.display_name = None
         seat.is_bot = True
         seat.status = "bot"
+        # Record loss if kicked from active game
+        if game["phase"] == "active" and kicked_user_id:
+            self._record_loss_for_leaving(kicked_user_id, kicked_display_name)
         game["updated_at"] = _now()
         return game
 
@@ -788,7 +807,125 @@ class InMemoryPersistence:
                 state.winner_seat_index = s.index
                 state.phase = "finished"
                 game["phase"] = "finished"
+                # Record stats for all players
+                self._record_game_result(game, state)
                 return
+
+    def _record_game_result(self, game: Dict[str, Any], state: GameState) -> None:
+        """Record stats for all human players when a game ends with a winner."""
+        if state.winner_seat_index is None:
+            return
+        seats: List[Seat] = game["seats"]
+        turn_count = state.turn_number
+        
+        for seat in seats:
+            if seat.is_bot or not seat.player_id:
+                continue
+            user_id = seat.player_id
+            is_winner = seat.index == state.winner_seat_index
+            
+            # Initialize stats if needed
+            if user_id not in self.user_stats:
+                self.user_stats[user_id] = {
+                    "played": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "best_turns": None,
+                }
+            
+            stats = self.user_stats[user_id]
+            stats["played"] += 1
+            
+            if is_winner:
+                stats["wins"] += 1
+                # Track best (fewest) turns to win
+                if stats["best_turns"] is None or turn_count < stats["best_turns"]:
+                    stats["best_turns"] = turn_count
+            else:
+                stats["losses"] += 1
+            
+            # Update leaderboard entry
+            self.leaderboard_entries[user_id] = {
+                "user_id": user_id,
+                "display_name": seat.display_name,
+                "wins": stats["wins"],
+                "losses": stats["losses"],
+                "played": stats["played"],
+                "best_turns": stats["best_turns"],
+            }
+
+    def _record_loss_for_leaving(self, user_id: str, display_name: Optional[str]) -> None:
+        """Record a loss for a player who leaves/gets kicked from an active game."""
+        if user_id not in self.user_stats:
+            self.user_stats[user_id] = {
+                "played": 0,
+                "wins": 0,
+                "losses": 0,
+                "best_turns": None,
+            }
+        
+        stats = self.user_stats[user_id]
+        stats["played"] += 1
+        stats["losses"] += 1
+        
+        # Update leaderboard entry
+        self.leaderboard_entries[user_id] = {
+            "user_id": user_id,
+            "display_name": display_name,
+            "wins": stats["wins"],
+            "losses": stats["losses"],
+            "played": stats["played"],
+            "best_turns": stats["best_turns"],
+        }
+
+    def get_stats(self, user_id: str) -> Dict[str, Any]:
+        """Get stats for a user."""
+        stats = self.user_stats.get(user_id, {
+            "played": 0,
+            "wins": 0,
+            "losses": 0,
+            "best_turns": None,
+        })
+        played = stats["played"]
+        wins = stats["wins"]
+        losses = stats["losses"]
+        denom = wins + losses
+        win_pct = float(wins) / denom if denom > 0 else 0.0
+        return {
+            "totals": {
+                "played": played,
+                "wins": wins,
+                "losses": losses,
+                "winPct": win_pct,
+                "bestTurns": stats["best_turns"],
+            }
+        }
+
+    def get_leaderboard(self, limit: int = 10) -> Dict[str, Any]:
+        """Get leaderboard sorted by wins descending."""
+        entries = list(self.leaderboard_entries.values())
+        # Sort by wins descending, then by best_turns ascending (lower is better)
+        entries.sort(key=lambda e: (-e["wins"], e["best_turns"] or float("inf")))
+        
+        ranked = []
+        for rank, e in enumerate(entries[:limit], 1):
+            wins = e["wins"]
+            losses = e["losses"]
+            played = e["played"]
+            denom = wins + losses
+            win_pct = float(wins) / denom if denom > 0 else 0.0
+            ranked.append({
+                "rank": rank,
+                "user_id": e["user_id"],
+                "display_name": e["display_name"],
+                "wins": wins,
+                "losses": losses,
+                "played": played,
+                "winPct": win_pct,
+                "bestTurns": e["best_turns"],
+            })
+        
+        return {"entries": ranked}
 
     def preview_legal_movers(self, game_id: str, user_id: str) -> Dict[str, Any]:
         """Return pawnIds for the current player's legal moves for the next card.
@@ -1427,15 +1564,21 @@ class FirestorePersistence:
 
                 return self._snapshot_to_game(game_ref.get())
             else:
-                # During active game, host seat becomes bot and we pick a new host
+                # During active/finished game, host seat becomes bot and we pick a new host
+                display_name = None
                 for s in seats:
                     if s.get("playerId") == user_id:
+                        display_name = s.get("displayName")
                         s["playerId"] = None
                         s["displayName"] = None
                         s["isBot"] = True
                         s["status"] = "bot"
                         break
 
+                # Record loss only if leaving an active game (not finished)
+                if data.get("phase") == "active":
+                    self._record_loss_for_leaving(user_id, display_name)
+                
                 # Clear the leaving host's activeGameId
                 user_ref = self._users_collection().document(user_id)
                 user_ref.set({"activeGameId": None}, merge=True)
@@ -1463,12 +1606,18 @@ class FirestorePersistence:
                 return self._snapshot_to_game(game_ref.get())
 
         # Non-host: convert their seat into a bot seat.
+        display_name = None
         for s in seats:
             if s.get("playerId") == user_id:
+                display_name = s.get("displayName")
                 s["playerId"] = None
                 s["displayName"] = None
                 s["isBot"] = True
                 s["status"] = "bot"
+
+        # Record loss if leaving an active game
+        if data.get("phase") == "active":
+            self._record_loss_for_leaving(user_id, display_name)
 
         data["seats"] = seats
         data["updatedAt"] = now
@@ -1500,6 +1649,7 @@ class FirestorePersistence:
 
         seat = seats[seat_index]
         kicked_player_id = seat.get("playerId")
+        kicked_display_name = seat.get("displayName")
 
         seat["playerId"] = None
         seat["displayName"] = None
@@ -1514,6 +1664,10 @@ class FirestorePersistence:
         if kicked_player_id:
             user_ref = self._users_collection().document(kicked_player_id)
             user_ref.set({"activeGameId": None}, merge=True)
+            
+            # Record loss if kicked from active game
+            if data.get("phase") == "active":
+                self._record_loss_for_leaving(kicked_player_id, kicked_display_name)
 
         return self._snapshot_to_game(game_ref.get())
 
@@ -1873,6 +2027,9 @@ class FirestorePersistence:
                     )
 
             self._check_winner_state(state)
+            
+            # Record stats if game ended
+            game_ended_with_winner = state.result == "win" and state.winner_seat_index is not None
 
             # Card 2 grants an extra turn by keeping the same current_seat_index.
             # No extra card is drawn or auto-played here; the next call to
@@ -1893,10 +2050,33 @@ class FirestorePersistence:
             result: Dict[str, Any] = dict(data)
             if "gameId" not in result:
                 result["gameId"] = game_id
+            
+            # Return info needed for stats recording
+            result["_game_ended"] = game_ended_with_winner
+            result["_winner_seat_index"] = state.winner_seat_index
+            result["_turn_count"] = state.turn_number
             return result
 
         transaction = self.client.transaction()
-        return _play_move_txn(transaction, game_ref, game_id, user_id, payload)
+        result = _play_move_txn(transaction, game_ref, game_id, user_id, payload)
+        
+        # Record stats outside the transaction
+        if result.get("_game_ended"):
+            self._record_game_result(
+                result.get("seats", []),
+                result.get("_winner_seat_index"),
+                result.get("_turn_count", 0)
+            )
+            # Clean up internal fields
+            del result["_game_ended"]
+            del result["_winner_seat_index"]
+            del result["_turn_count"]
+        elif "_game_ended" in result:
+            del result["_game_ended"]
+            del result["_winner_seat_index"]
+            del result["_turn_count"]
+        
+        return result
 
     def bot_step(self, game_id: str) -> Dict[str, Any]:
         """Apply a bot move for the current bot-controlled seat.
@@ -1962,6 +2142,9 @@ class FirestorePersistence:
                 )
 
             self._check_winner_state(state)
+            
+            # Record stats if game ended
+            game_ended_with_winner = state.result == "win" and state.winner_seat_index is not None
 
             if state.result == "active" and card != "2":
                 self._advance_turn(seats_data, state)
@@ -1979,10 +2162,33 @@ class FirestorePersistence:
             result: Dict[str, Any] = dict(data)
             if "gameId" not in result:
                 result["gameId"] = game_id
+            
+            # Return info needed for stats recording
+            result["_game_ended"] = game_ended_with_winner
+            result["_winner_seat_index"] = state.winner_seat_index
+            result["_turn_count"] = state.turn_number
             return result
 
         transaction = self.client.transaction()
-        return _bot_step_txn(transaction, game_ref, game_id)
+        result = _bot_step_txn(transaction, game_ref, game_id)
+        
+        # Record stats outside the transaction
+        if result.get("_game_ended"):
+            self._record_game_result(
+                result.get("seats", []),
+                result.get("_winner_seat_index"),
+                result.get("_turn_count", 0)
+            )
+            # Clean up internal fields
+            del result["_game_ended"]
+            del result["_winner_seat_index"]
+            del result["_turn_count"]
+        elif "_game_ended" in result:
+            del result["_game_ended"]
+            del result["_winner_seat_index"]
+            del result["_turn_count"]
+        
+        return result
 
     def to_client(self, game: Dict[str, Any], user_id: str) -> Dict[str, Any]:
         """Shape a Firestore game dict into the client-facing payload.
@@ -2023,3 +2229,146 @@ class FirestorePersistence:
             "state": (game.get("state") if game.get("state") is not None else None),
             "viewerSeatIndex": viewer_seat_index,
         }
+
+    # --- Stats methods ---
+
+    def _stats_ref(self, user_id: str):
+        return self.client.collection("losiento_stats").document(user_id)
+
+    def _leaderboard_ref(self):
+        return self.client.collection("losiento_leaderboard")
+
+    def _record_game_result(self, seats_data: List[Dict[str, Any]], winner_seat_index: int, turn_count: int) -> None:
+        """Record stats for all human players when a game ends with a winner."""
+        for seat in seats_data:
+            if seat.get("isBot") or not seat.get("playerId"):
+                continue
+            user_id = seat["playerId"]
+            display_name = seat.get("displayName")
+            is_winner = seat.get("index") == winner_seat_index
+
+            stats_ref = self._stats_ref(user_id)
+            
+            # Read current stats FIRST before any writes
+            snap = stats_ref.get()
+            current_data = snap.to_dict() or {}
+            current_best = current_data.get("best_turns")
+            current_wins = int(current_data.get("wins", 0) or 0)
+            current_losses = int(current_data.get("losses", 0) or 0)
+            current_played = int(current_data.get("played", 0) or 0)
+            
+            # Calculate new values
+            new_played = current_played + 1
+            new_wins = current_wins + (1 if is_winner else 0)
+            new_losses = current_losses + (0 if is_winner else 1)
+            new_best = current_best
+            if is_winner and (current_best is None or turn_count < current_best):
+                new_best = turn_count
+
+            # Now do all writes
+            stats_ref.set({
+                "played": new_played,
+                "wins": new_wins,
+                "losses": new_losses,
+                "best_turns": new_best,
+                "updated_at": _now(),
+            }, merge=True)
+
+            # Update leaderboard entry
+            lb_ref = self._leaderboard_ref().document(user_id)
+            lb_ref.set({
+                "user_id": user_id,
+                "display_name": display_name,
+                "wins": new_wins,
+                "losses": new_losses,
+                "played": new_played,
+                "best_turns": new_best,
+                "updated_at": _now(),
+            })
+
+    def _record_loss_for_leaving(self, user_id: str, display_name: Optional[str]) -> None:
+        """Record a loss for a player who leaves/gets kicked from an active game."""
+        stats_ref = self._stats_ref(user_id)
+        
+        # Read current stats FIRST before any writes
+        snap = stats_ref.get()
+        current_data = snap.to_dict() or {}
+        current_wins = int(current_data.get("wins", 0) or 0)
+        current_losses = int(current_data.get("losses", 0) or 0)
+        current_played = int(current_data.get("played", 0) or 0)
+        current_best = current_data.get("best_turns")
+        
+        # Calculate new values
+        new_played = current_played + 1
+        new_losses = current_losses + 1
+        
+        # Now do all writes
+        stats_ref.set({
+            "played": new_played,
+            "wins": current_wins,
+            "losses": new_losses,
+            "best_turns": current_best,
+            "updated_at": _now(),
+        }, merge=True)
+
+        # Update leaderboard entry
+        lb_ref = self._leaderboard_ref().document(user_id)
+        lb_ref.set({
+            "user_id": user_id,
+            "display_name": display_name,
+            "wins": current_wins,
+            "losses": new_losses,
+            "played": new_played,
+            "best_turns": current_best,
+            "updated_at": _now(),
+        })
+
+    def get_stats(self, user_id: str) -> Dict[str, Any]:
+        """Get stats for a user."""
+        stats_ref = self._stats_ref(user_id)
+        snap = stats_ref.get()
+        if snap.exists:
+            data = snap.to_dict() or {}
+        else:
+            data = {}
+        played = int(data.get("played", 0) or 0)
+        wins = int(data.get("wins", 0) or 0)
+        losses = int(data.get("losses", 0) or 0)
+        best_turns = data.get("best_turns")
+        denom = wins + losses
+        win_pct = float(wins) / denom if denom > 0 else 0.0
+        return {
+            "totals": {
+                "played": played,
+                "wins": wins,
+                "losses": losses,
+                "winPct": win_pct,
+                "bestTurns": best_turns,
+            }
+        }
+
+    def get_leaderboard(self, limit: int = 10) -> Dict[str, Any]:
+        """Get leaderboard sorted by wins descending."""
+        lb_ref = self._leaderboard_ref()
+        query = lb_ref.order_by("wins", direction=firestore.Query.DESCENDING).limit(limit)
+        
+        ranked = []
+        for rank, snap in enumerate(query.stream(), 1):
+            e = snap.to_dict() or {}
+            wins = int(e.get("wins", 0) or 0)
+            losses = int(e.get("losses", 0) or 0)
+            played = int(e.get("played", 0) or 0)
+            denom = wins + losses
+            win_pct = float(wins) / denom if denom > 0 else 0.0
+            ranked.append({
+                "rank": rank,
+                "user_id": e.get("user_id"),
+                "display_name": e.get("display_name"),
+                "wins": wins,
+                "losses": losses,
+                "played": played,
+                "winPct": win_pct,
+                "bestTurns": e.get("best_turns"),
+            })
+        
+        return {"entries": ranked}

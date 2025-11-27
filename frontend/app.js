@@ -1020,6 +1020,17 @@
       }
     }
 
+    // Update leave game button based on game state
+    if (leaveGameBtn) {
+      if (state.result === "active") {
+        leaveGameBtn.textContent = "Leave game";
+        leaveGameBtn.classList.remove("btn-play-again");
+      } else {
+        leaveGameBtn.textContent = "Play again";
+        leaveGameBtn.classList.add("btn-play-again");
+      }
+    }
+
     if (gameCardEl) {
       // Show "Current Card" when someone is contemplating, "Last Card" otherwise
       const cardLabel = isShowingCurrentCard ? "Current card" : "Last card";

@@ -274,6 +274,14 @@ def create_app(persistence=None) -> FastAPI:
             raise HTTPException(status_code=400, detail=msg)
         return app.state.persistence.to_client(doc, user_id)
 
+    @app.get(f"{API_BASE}/stats")
+    def get_stats(user_id: str = Depends(get_user_id)):
+        return app.state.persistence.get_stats(user_id)
+
+    @app.get(f"{API_BASE}/leaderboard")
+    def get_leaderboard(limit: int = 10):
+        return app.state.persistence.get_leaderboard(limit)
+
     frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
     if frontend_dir.exists():
         app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
