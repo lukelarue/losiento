@@ -844,10 +844,10 @@ class InMemoryPersistence:
             else:
                 stats["losses"] += 1
             
-            # Update leaderboard entry
+            # Update leaderboard entry (use user_id for display, not in-game nickname)
             self.leaderboard_entries[user_id] = {
                 "user_id": user_id,
-                "display_name": seat.display_name,
+                "display_name": None,
                 "wins": stats["wins"],
                 "losses": stats["losses"],
                 "played": stats["played"],
@@ -868,10 +868,10 @@ class InMemoryPersistence:
         stats["played"] += 1
         stats["losses"] += 1
         
-        # Update leaderboard entry
+        # Update leaderboard entry (use user_id for display, not in-game nickname)
         self.leaderboard_entries[user_id] = {
             "user_id": user_id,
-            "display_name": display_name,
+            "display_name": None,
             "wins": stats["wins"],
             "losses": stats["losses"],
             "played": stats["played"],
@@ -2274,11 +2274,11 @@ class FirestorePersistence:
                 "updated_at": _now(),
             }, merge=True)
 
-            # Update leaderboard entry
+            # Update leaderboard entry (use user_id for display, not in-game nickname)
             lb_ref = self._leaderboard_ref().document(user_id)
             lb_ref.set({
                 "user_id": user_id,
-                "display_name": display_name,
+                "display_name": None,
                 "wins": new_wins,
                 "losses": new_losses,
                 "played": new_played,
@@ -2311,11 +2311,11 @@ class FirestorePersistence:
             "updated_at": _now(),
         }, merge=True)
 
-        # Update leaderboard entry
+        # Update leaderboard entry (use user_id for display, not in-game nickname)
         lb_ref = self._leaderboard_ref().document(user_id)
         lb_ref.set({
             "user_id": user_id,
-            "display_name": display_name,
+            "display_name": None,
             "wins": current_wins,
             "losses": new_losses,
             "played": new_played,
