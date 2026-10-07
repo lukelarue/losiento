@@ -23,6 +23,31 @@ resource "google_artifact_registry_repository" "losiento" {
     service     = "losiento"
   }
 
+  # Old images are deleted so storage stops growing with every push. Each push
+  # stores three versions: the tagged index, the image Cloud Run actually runs
+  # (untagged, so never delete "untagged" alone), and a provenance attestation.
+  # Fifteen versions is therefore the last five pushes, and the serving image is
+  # always among them; everything older than 30 days goes. When a version
+  # matches both policies, KEEP wins.
+  cleanup_policy_dry_run = false
+
+  cleanup_policies {
+    id     = "keep-last-five-pushes"
+    action = "KEEP"
+    most_recent_versions {
+      keep_count = 15
+    }
+  }
+
+  cleanup_policies {
+    id     = "delete-after-30-days"
+    action = "DELETE"
+    condition {
+      tag_state  = "ANY"
+      older_than = "2592000s"
+    }
+  }
+
   depends_on = [google_project_service.artifactregistry]
 }
 
